@@ -15,21 +15,21 @@
     from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 
   const firebaseConfig = {
-    apiKey:            "REPLACE_WITH_YOUR_API_KEY",
-    authDomain:        "REPLACE_WITH_YOUR_AUTH_DOMAIN",
-    projectId:         "REPLACE_WITH_YOUR_PROJECT_ID",
-    storageBucket:     "REPLACE_WITH_YOUR_STORAGE_BUCKET",
-    messagingSenderId: "REPLACE_WITH_YOUR_MESSAGING_SENDER_ID",
-    appId:             "REPLACE_WITH_YOUR_APP_ID"
+    apiKey:            "AIzaSyA4cNvHe5vSQr6MqvH-SHNIX4cpRbXVqcc",
+    authDomain:        "kids-chores-74ff9.firebaseapp.com",
+    projectId:         "kids-chores-74ff9",
+    storageBucket:     "kids-chores-74ff9.firebasestorage.app",
+    messagingSenderId: "789602359442",
+    appId:             "1:789602359442:web:690015ae59fb1eeb066e4b"
   };
 
   const app = initializeApp(firebaseConfig);
   const db  = getFirestore(app);
 
-  // Firestore document paths
-  // /homebase/state_a  → Addison's week
-  // /homebase/state_b  → Bryson's week
-  // /homebase/meta     → week start date, alert dismissed flag
+  // Firestore document paths (one doc per kid per week; auto-resets Sunday)
+  // /homebase/a_YYYY-MM-DD  → Addison's week
+  // /homebase/b_YYYY-MM-DD  → Bryson's week
+  // /homebase/meta          → alert dismissed flag
 
   window._db = db;
   window._doc = doc;
