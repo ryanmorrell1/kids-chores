@@ -325,6 +325,14 @@ function getWeekStartStr(){
   return new Date(new Date().setDate(diff)).toISOString().split('T')[0];
 }
 
+// "Jun 14 – Jun 20" for a given week-start date string. Used on both kid tabs and parent report.
+function weekRangeStr(weekStartStr){
+  const start=new Date(weekStartStr+'T00:00:00');
+  const end=new Date(start); end.setDate(end.getDate()+6);
+  const fmt=d=>d.toLocaleDateString('en-US',{month:'short',day:'numeric'});
+  return `${fmt(start)} – ${fmt(end)}`;
+}
+
 function freshKidState(t){
   return {done:{},claimed:{},grade:null,allowance:KIDS[t].allowance,weekStart:getWeekStartStr()};
 }
@@ -332,6 +340,7 @@ function freshKidState(t){
 let state = {
   a: freshKidState('a'),
   b: freshKidState('b'),
+  projects: { a:{}, b:{} },   // persistent one-time project claims — stored in meta doc, NOT reset weekly
   alertDismissed: false,
   lastSync: null
 };
@@ -378,6 +387,7 @@ async function pushMeta(){
   try {
     await window._setDoc(getMetaDoc(), {
       alertDismissed: state.alertDismissed,
+      projects: state.projects,
       updatedAt: window._serverTimestamp()
     }, {merge:true});
   } catch(e){ console.error('Meta write error', e); }
@@ -414,13 +424,17 @@ function subscribeToFirestore(){
     if(t==='a') unsubA=unsub; else unsubB=unsub;
   });
 
-  // Subscribe to meta
+  // Subscribe to meta (alert flag + persistent one-time project claims)
   unsubMeta = window._onSnapshot(getMetaDoc(), snap => {
     if(snap.exists()){
       const data = snap.data();
       state.alertDismissed = data.alertDismissed || false;
+      state.projects = data.projects || {a:{},b:{}};
+      if(!state.projects.a) state.projects.a={};
+      if(!state.projects.b) state.projects.b={};
     }
     checkAlerts();
+    if(currentView==='p') renderParent(); else renderKid(currentView);
   });
 }
 
@@ -434,12 +448,16 @@ function getStats(t){
   const pct = total>0 ? doneCount/total : 0;
   const allowance = s.allowance || KIDS[t].allowance;
   const allowEarned = Math.round(pct*allowance);
-  const allExtras = [...extrasFor(t), ...PROJECTS];
-  const extrasEarned = allExtras.filter(e=>s.claimed[e.id]).reduce((sum,e)=>sum+e.amt,0);
+  // Weekly extras live in the per-week doc (reset every week); one-time projects live in meta (persistent).
+  const projClaims = state.projects[t] || {};
+  const claimedList = [
+    ...extrasFor(t).filter(e=>s.claimed[e.id]),
+    ...PROJECTS.filter(e=>projClaims[e.id])
+  ];
+  const extrasEarned = claimedList.reduce((sum,e)=>sum+e.amt,0);
   const tier = GRADE_TIERS.find(g=>g.gpa===s.grade);
   const gradeBonus = (tier&&!tier.floor)?tier.amt:0;
   const totalExtras = extrasEarned+gradeBonus;
-  const claimedList = allExtras.filter(e=>s.claimed[e.id]);
   return {doneCount,total,pct,allowEarned,extrasEarned,gradeBonus,totalExtras,claimedList,allowance};
 }
 
@@ -482,7 +500,7 @@ function renderKid(t){
     </div>
   </div>
   <div class="prog-wrap">
-    <div class="prog-labels"><span>Weekly chore progress</span><span>${stats.doneCount} of ${stats.total} done</span></div>
+    <div class="prog-labels"><span>Weekly chore progress<span style="color:var(--text3);font-weight:400;"> · Week of ${weekRangeStr(s.weekStart)}</span></span><span>${stats.doneCount} of ${stats.total} done</span></div>
     <div class="prog-track"><div class="prog-fill ${pfC}" style="width:${pct}%"></div></div>
   </div>`;
 
@@ -545,8 +563,8 @@ function renderKid(t){
   // Special Projects
   h+=`<div class="section"><div class="sec-head"><span>Special projects</span></div>`;
   PROJECTS.forEach(e=>{
-    const done=!!s.claimed[e.id];
-    h+=`<div class="extra-row${done?' done':''}" onclick="toggleExtra('${t}','${e.id}')">
+    const done=!!(state.projects[t]||{})[e.id];
+    h+=`<div class="extra-row${done?' done':''}" onclick="toggleProject('${t}','${e.id}')">
       <div class="c-check ${done?chkC:''}">${done?chkSVG():''}</div>
       <span class="c-name">${e.text} <span class="badge b-onetime">one-time</span></span>
       <span class="e-amt ${amtC}">+$${e.amt}</span>
@@ -568,12 +586,8 @@ function renderParent(){
   const sA=getStats('a'), sB=getStats('b');
   const totalPayout=sA.allowEarned+sA.totalExtras+sB.allowEarned+sB.totalExtras;
 
-  const weekStart=new Date(state.a.weekStart+'T00:00:00');
-  const weekEnd=new Date(weekStart); weekEnd.setDate(weekEnd.getDate()+6);
-  const fmt=d=>d.toLocaleDateString('en-US',{month:'short',day:'numeric'});
-
   let h=`<div class="main">`;
-  h+=`<div style="font-size:13px;color:var(--text3);margin-bottom:1rem;">Week of ${fmt(weekStart)} – ${fmt(weekEnd)}</div>`;
+  h+=`<div style="font-size:13px;color:var(--text3);margin-bottom:1rem;">Week of ${weekRangeStr(state.a.weekStart)}</div>`;
   h+=`<div class="payout-bar"><span class="pt-label">&#128181; Total family payout this week</span><span class="pt-val">$${totalPayout}</span></div>`;
 
   // Kid summary cards
@@ -678,6 +692,13 @@ function toggleExtra(t,id){
   state[t].claimed[id]=!state[t].claimed[id];
   renderKid(t);
   pushState(t);
+}
+
+function toggleProject(t,id){
+  if(!state.projects[t]) state.projects[t]={};
+  state.projects[t][id]=!state.projects[t][id];
+  if(currentView==='p') renderParent(); else renderKid(t);
+  pushMeta();   // projects persist in meta — survive the weekly reset
 }
 
 function selectGrade(t,gpa){
