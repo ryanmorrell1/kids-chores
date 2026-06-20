@@ -1,0 +1,858 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Homebase — Family Chore Tracker</title>
+
+<!-- ─── FIREBASE SETUP ──────────────────────────────────────────────────────
+  Replace the config object below with your own Firebase project credentials.
+  You get these from: Firebase Console → Project Settings → Your Apps → SDK setup
+──────────────────────────────────────────────────────────────────────────── -->
+<script type="module">
+  import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
+  import { getFirestore, doc, getDoc, setDoc, onSnapshot, serverTimestamp }
+    from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+
+  const firebaseConfig = {
+    apiKey:            "REPLACE_WITH_YOUR_API_KEY",
+    authDomain:        "REPLACE_WITH_YOUR_AUTH_DOMAIN",
+    projectId:         "REPLACE_WITH_YOUR_PROJECT_ID",
+    storageBucket:     "REPLACE_WITH_YOUR_STORAGE_BUCKET",
+    messagingSenderId: "REPLACE_WITH_YOUR_MESSAGING_SENDER_ID",
+    appId:             "REPLACE_WITH_YOUR_APP_ID"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db  = getFirestore(app);
+
+  // Firestore document paths
+  // /homebase/state_a  → Addison's week
+  // /homebase/state_b  → Bryson's week
+  // /homebase/meta     → week start date, alert dismissed flag
+
+  window._db = db;
+  window._doc = doc;
+  window._setDoc = setDoc;
+  window._getDoc = getDoc;
+  window._onSnapshot = onSnapshot;
+  window._serverTimestamp = serverTimestamp;
+  window._firebaseReady = true;
+  document.dispatchEvent(new Event('firebase-ready'));
+</script>
+
+<style>
+  :root {
+    --bg:#F7F6F2; --surface:#FFFFFF; --surface2:#F0EEE9;
+    --border:#E2DFD8; --border2:#C8C4BA;
+    --text:#1A1916; --text2:#6B6860; --text3:#9E9B94;
+    --purple-bg:#EEEDFE; --purple-mid:#7F77DD; --purple-dark:#3C3489; --purple-border:#AFA9EC;
+    --teal-bg:#E1F5EE; --teal-mid:#1D9E75; --teal-dark:#085041; --teal-border:#5DCAA5;
+    --amber-bg:#FAEEDA; --amber-dark:#633806;
+    --coral-bg:#FAECE7; --coral-dark:#712B13;
+    --gray-bg:#F1EFE8; --gray-dark:#5F5E5A;
+    --green-bg:#EAF3DE; --green-dark:#27500A;
+    --red-bg:#FCEBEB; --red-dark:#791F1F; --red-border:#F09595;
+    --radius:10px; --radius-sm:6px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:100vh;font-size:15px;}
+
+  /* NAV */
+  .nav{background:var(--surface);border-bottom:1px solid var(--border);padding:0 1.5rem;display:flex;align-items:center;position:sticky;top:0;z-index:100;}
+  .nav-logo{font-size:16px;font-weight:600;padding:1rem 1rem 1rem 0;border-right:1px solid var(--border);margin-right:1rem;white-space:nowrap;}
+  .nav-logo span{color:var(--purple-mid);}
+  .nav-tabs{display:flex;flex:1;overflow-x:auto;}
+  .nav-tab{padding:1rem 1.1rem;font-size:14px;font-weight:500;color:var(--text2);border:none;background:none;cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap;transition:color .15s,border-color .15s;}
+  .nav-tab:hover{color:var(--text);}
+  .nav-tab.act-a{color:var(--purple-dark);border-bottom-color:var(--purple-mid);}
+  .nav-tab.act-b{color:var(--teal-dark);border-bottom-color:var(--teal-mid);}
+  .nav-tab.act-p{color:var(--text);border-bottom-color:var(--text);}
+  .sync-dot{width:7px;height:7px;border-radius:50%;background:#9E9B94;margin-left:auto;flex-shrink:0;transition:background .3s;}
+  .sync-dot.live{background:#1D9E75;}
+  .sync-dot.err{background:#E24B4A;}
+
+  /* ALERT */
+  .alert-bar{background:var(--amber-bg);border-bottom:1px solid #FAC775;padding:10px 1.5rem;display:flex;align-items:center;gap:10px;font-size:13px;color:var(--amber-dark);}
+  .alert-bar.hidden{display:none;}
+  .alert-bar strong{font-weight:600;}
+  .alert-dismiss{margin-left:auto;background:none;border:none;color:var(--amber-dark);cursor:pointer;font-size:18px;line-height:1;opacity:.6;}
+  .alert-dismiss:hover{opacity:1;}
+
+  /* OFFLINE BANNER */
+  .offline-bar{background:var(--red-bg);border-bottom:1px solid var(--red-border);padding:8px 1.5rem;font-size:13px;color:var(--red-dark);display:none;align-items:center;gap:8px;}
+  .offline-bar.show{display:flex;}
+
+  /* LOADING */
+  .loading{display:flex;align-items:center;justify-content:center;min-height:60vh;flex-direction:column;gap:12px;color:var(--text3);font-size:14px;}
+  .spinner{width:28px;height:28px;border:2px solid var(--border);border-top-color:var(--purple-mid);border-radius:50%;animation:spin .7s linear infinite;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+
+  /* MAIN */
+  .main{max-width:800px;margin:0 auto;padding:1.5rem;}
+
+  /* SUMMARY */
+  .summary-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:1.5rem;}
+  .summary-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1rem;text-align:center;}
+  .s-label{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;}
+  .s-value{font-size:26px;font-weight:600;}
+  .s-sub{font-size:11px;color:var(--text3);margin-top:4px;}
+  .val-purple{color:var(--purple-dark);}
+  .val-teal{color:var(--teal-dark);}
+
+  /* PROGRESS */
+  .prog-wrap{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1rem 1.25rem;margin-bottom:1.5rem;}
+  .prog-labels{display:flex;justify-content:space-between;font-size:13px;color:var(--text2);margin-bottom:8px;}
+  .prog-track{height:8px;background:var(--surface2);border-radius:99px;overflow:hidden;}
+  .prog-fill{height:100%;border-radius:99px;transition:width .4s ease;}
+  .pf-a{background:var(--purple-mid);}
+  .pf-b{background:var(--teal-mid);}
+
+  /* SECTION */
+  .section{margin-bottom:1.5rem;}
+  .sec-head{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;}
+
+  /* CHORE ROW */
+  .chore-row{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--surface);margin-bottom:5px;cursor:pointer;transition:background .1s,border-color .1s;user-select:none;}
+  .chore-row:hover{background:var(--surface2);border-color:var(--border2);}
+  .chore-row.done{opacity:.42;}
+  .chore-row.done .c-name{text-decoration:line-through;color:var(--text3);}
+  .c-check{width:22px;height:22px;border-radius:50%;border:1.5px solid var(--border2);flex-shrink:0;display:flex;align-items:center;justify-content:center;transition:all .15s;}
+  .c-check svg{display:none;}
+  .chore-row.done .c-check svg{display:block;}
+  .chk-a{background:var(--purple-mid);border-color:var(--purple-mid);}
+  .chk-b{background:var(--teal-mid);border-color:var(--teal-mid);}
+  .c-name{flex:1;font-size:14px;color:var(--text);line-height:1.4;}
+  .c-freq{font-size:11px;color:var(--text3);white-space:nowrap;flex-shrink:0;}
+  .badge{display:inline-block;font-size:10px;font-weight:500;padding:2px 7px;border-radius:20px;white-space:nowrap;margin-left:5px;vertical-align:middle;}
+  .b-shared{background:var(--gray-bg);color:var(--gray-dark);}
+  .b-a{background:var(--purple-bg);color:var(--purple-dark);}
+  .b-b{background:var(--teal-bg);color:var(--teal-dark);}
+  .b-school{background:var(--amber-bg);color:var(--amber-dark);}
+  .b-onetime{background:var(--coral-bg);color:var(--coral-dark);}
+
+  /* EXTRA ROW */
+  .extra-row{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--surface);margin-bottom:5px;cursor:pointer;transition:background .1s;user-select:none;}
+  .extra-row:hover{background:var(--surface2);}
+  .extra-row.done{opacity:.42;}
+  .extra-row.done .c-name{text-decoration:line-through;color:var(--text3);}
+  .e-amt{font-size:13px;font-weight:600;flex-shrink:0;}
+  .ea-a{color:var(--purple-dark);}
+  .ea-b{color:var(--teal-dark);}
+
+  /* GRADE CARD */
+  .grade-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1rem 1.25rem;margin-bottom:5px;}
+  .grade-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px;}
+  .grade-title{font-size:14px;font-weight:500;}
+  .grade-sub{font-size:12px;color:var(--text3);}
+  .grade-tiers{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;}
+  .g-tier{border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 6px;text-align:center;cursor:pointer;transition:all .15s;}
+  .g-tier.floor{background:var(--surface2);cursor:default;}
+  .g-tier:not(.floor):hover{border-color:var(--border2);background:var(--surface2);}
+  .g-tier.sel-a{background:var(--purple-bg);border-color:var(--purple-border);}
+  .g-tier.sel-b{background:var(--teal-bg);border-color:var(--teal-border);}
+  .g-gpa{font-size:16px;font-weight:600;color:var(--text);margin-bottom:2px;}
+  .floor .g-gpa{color:var(--text2);}
+  .g-amt{font-size:12px;color:var(--text2);}
+  .g-amt.sel-a{color:var(--purple-dark);font-weight:600;}
+  .g-amt.sel-b{color:var(--teal-dark);font-weight:600;}
+
+  /* PARENT */
+  .p-grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1.5rem;}
+  .p-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;}
+  .p-card-head{padding:1rem 1.25rem;border-bottom:1px solid var(--border);}
+  .p-card-name{font-size:16px;font-weight:600;margin-bottom:2px;}
+  .p-card-name.purple{color:var(--purple-dark);}
+  .p-card-name.teal{color:var(--teal-dark);}
+  .p-card-sub{font-size:12px;color:var(--text3);}
+  .p-card-body{padding:1rem 1.25rem;}
+  .p-row{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px;}
+  .p-row:last-child{border-bottom:none;}
+  .p-row .pl{color:var(--text2);}
+  .p-row .pv{font-weight:600;color:var(--text);}
+  .pv.good{color:var(--green-dark);}
+  .pv.warn{color:var(--amber-dark);}
+  .pv.purple{color:var(--purple-dark);}
+  .pv.teal{color:var(--teal-dark);}
+  .mini-prog{height:6px;background:var(--surface2);border-radius:99px;overflow:hidden;margin-top:10px;}
+  .mini-fill{height:100%;border-radius:99px;}
+
+  .p-summary{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1.25rem;margin-bottom:1.5rem;}
+  .p-summary h3{font-size:11px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:1rem;}
+  .e-list .e-item{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border);font-size:13px;color:var(--text2);}
+  .e-list .e-item:last-child{border-bottom:none;}
+  .e-item .eamt{font-weight:600;color:var(--text);}
+  .no-extras{font-size:13px;color:var(--text3);font-style:italic;}
+
+  .payout-bar{background:var(--green-bg);border:1px solid #97C459;border-radius:var(--radius);padding:1rem 1.25rem;display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;}
+  .payout-bar .pt-label{font-size:14px;font-weight:500;color:var(--green-dark);}
+  .payout-bar .pt-val{font-size:24px;font-weight:700;color:var(--green-dark);}
+
+  .divider{height:1px;background:var(--border);margin:1.5rem 0;}
+
+  .btn-row{display:flex;gap:10px;flex-wrap:wrap;}
+  .btn{padding:9px 16px;border-radius:var(--radius-sm);font-size:13px;font-weight:500;cursor:pointer;border:1px solid var(--border2);background:var(--surface);color:var(--text);transition:all .15s;}
+  .btn:hover{background:var(--surface2);}
+  .btn-danger{border-color:var(--red-border);color:var(--red-dark);background:var(--red-bg);}
+  .btn-danger:hover{background:#F7C1C1;}
+  .btn-notif{border-color:var(--purple-border);color:var(--purple-dark);background:var(--purple-bg);}
+  .btn-notif:hover{background:#CECBF6;}
+
+  .last-sync{font-size:11px;color:var(--text3);margin-top:1rem;text-align:center;}
+
+  @media(max-width:600px){
+    .p-grid{grid-template-columns:1fr;}
+    .grade-tiers{grid-template-columns:repeat(2,1fr);}
+    .main{padding:1rem;}
+    .nav-logo{font-size:14px;}
+  }
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-logo">&#127968; <span>Home</span>base</div>
+  <div class="nav-tabs">
+    <button class="nav-tab act-a" onclick="showView('a')" id="tab-a">Addison</button>
+    <button class="nav-tab" onclick="showView('b')" id="tab-b">Bryson</button>
+    <button class="nav-tab" onclick="showView('p')" id="tab-p">&#128202; Parent Report</button>
+  </div>
+  <div class="sync-dot" id="sync-dot" title="Sync status"></div>
+</nav>
+
+<div class="offline-bar" id="offline-bar">
+  &#9889; You're offline — changes will sync when you reconnect.
+</div>
+
+<div class="alert-bar hidden" id="alert-bar">
+  <span>&#9888;&#65039;</span>
+  <span id="alert-text"><strong>Week ends Sunday!</strong> Check your outstanding chores.</span>
+  <button class="alert-dismiss" onclick="dismissAlert()">&#10005;</button>
+</div>
+
+<div id="view-a"><div class="loading"><div class="spinner"></div>Connecting to Homebase…</div></div>
+<div id="view-b" style="display:none;"><div class="loading"><div class="spinner"></div>Connecting to Homebase…</div></div>
+<div id="view-p" style="display:none;"><div class="loading"><div class="spinner"></div>Connecting to Homebase…</div></div>
+
+<script>
+// ─── DATA DEFINITIONS ─────────────────────────────────────────────────────────
+
+const KIDS = {
+  a: { name:'Addison', age:16, allowance:25 },
+  b: { name:'Bryson',  age:14, allowance:20 }
+};
+
+const CHORES = {
+  a:[
+    {id:'a1', text:'Make bed',                                   freq:'Daily',                         type:'shared'},
+    {id:'a2', text:'Personal hygiene routine',                   freq:'Daily',                         type:'shared'},
+    {id:'a3', text:'Prayers & devotionals',                      freq:'Daily',                         type:'shared'},
+    {id:'a4', text:'Complete schoolwork',                        freq:'Daily (school year)',            type:'school'},
+    {id:'a5', text:'Walk Bo',                                    freq:'Daily',                         type:'shared'},
+    {id:'a6', text:'Help with family meals (cooking + cleanup)', freq:'Daily',                         type:'shared'},
+    {id:'a7', text:'Vacuum main floor',                          freq:'Daily',                         type:'unique'},
+    {id:'a8', text:'Exercise / practice / game / match',         freq:'3–5x/week',                     type:'shared'},
+    {id:'a9', text:'Youth group',                                freq:'Weekly',                        type:'shared'},
+    {id:'a10',text:'Community volunteer hours (30 hrs min)',      freq:'Yearly',                        type:'shared'},
+    {id:'a11',text:'Prepare backpack & water bottle',            freq:'Sun–Thu evenings (school year)', type:'school'},
+    {id:'a12',text:'Own laundry (wash, dry, put away)',          freq:'Wed & Sat',                     type:'shared'},
+    {id:'a13',text:'Sheets & towels',                            freq:'Every Saturday',                type:'shared'},
+    {id:'a14',text:'Full bedroom clean',                         freq:'Every other Sat or Sun',        type:'shared'},
+    {id:'a15',text:'Full bathroom clean (with Bryson)',          freq:'Every other Sat morning',       type:'shared'},
+    {id:'a16',text:'Grocery run',                                freq:'2x/week',                       type:'unique'},
+  ],
+  b:[
+    {id:'b1', text:'Make bed',                                   freq:'Daily',                         type:'shared'},
+    {id:'b2', text:'Personal hygiene routine',                   freq:'Daily',                         type:'shared'},
+    {id:'b3', text:'Prayers & devotionals',                      freq:'Daily',                         type:'shared'},
+    {id:'b4', text:'Complete schoolwork',                        freq:'Daily (school year)',            type:'school'},
+    {id:'b5', text:'Walk Bo',                                    freq:'Daily',                         type:'shared'},
+    {id:'b6', text:'Help with family meals (cooking + cleanup)', freq:'Daily',                         type:'shared'},
+    {id:'b7', text:'Exercise / practice / game / match',         freq:'3–5x/week',                     type:'shared'},
+    {id:'b8', text:'Youth group',                                freq:'Weekly',                        type:'shared'},
+    {id:'b9', text:'Community volunteer hours (30 hrs min)',      freq:'Yearly',                        type:'shared'},
+    {id:'b10',text:'Prepare backpack & water bottle',            freq:'Sun–Thu evenings (school year)', type:'school'},
+    {id:'b11',text:'Own laundry (wash, dry, put away)',          freq:'Wed & Sat',                     type:'shared'},
+    {id:'b12',text:'Sheets & towels',                            freq:'Every Saturday',                type:'shared'},
+    {id:'b13',text:'Full bedroom clean',                         freq:'Every other Sat or Sun',        type:'shared'},
+    {id:'b14',text:'Full bathroom clean (with Addison)',         freq:'Every other Sat morning',       type:'shared'},
+    {id:'b15',text:'Gather all household trash + put cans out',  freq:'Sun night & Wed night',         type:'unique'},
+    {id:'b16',text:'Bring trash cans in from street',            freq:'Mon morning & Thu morning',     type:'unique'},
+  ]
+};
+
+const EXTRAS_SHARED = [
+  {id:'xs1',text:'Vacuum basement, upstairs & stairs',                   amt:15, cat:'house'},
+  {id:'xs2',text:'Steam clean hardwood + vacuum area rugs (main floor)', amt:10, cat:'house'},
+  {id:'xs3',text:'Wash & vacuum car',                                    amt:15, cat:'house'},
+  {id:'xs4',text:'Blowout garage, front walk & driveway',               amt:10, cat:'house'},
+  {id:'xs5',text:'Read a book (200+ pages)',                             amt:10, cat:'learning'},
+  {id:'xs6',text:'Complete a Khan Academy course',                       amt:25, cat:'learning'},
+  {id:'xs7',text:'Complete 2 Duolingo levels',                          amt:10, cat:'learning'},
+];
+const EXTRAS_A = [
+  {id:'xa1',text:'Deep clean kitchen (appliances, cabinets, counters)',  amt:12, cat:'house'},
+  {id:'xa2',text:'Organize pantry or a closet',                          amt:10, cat:'house'},
+  {id:'xa3',text:'Deep clean fridge & freezer',                          amt:10, cat:'house'},
+  {id:'xa4',text:'Wash windows inside',                                  amt:10, cat:'house'},
+  {id:'xa5',text:'Prep & cook a full family meal solo',                  amt:15, cat:'house'},
+];
+const EXTRAS_B = [
+  {id:'xb1',text:'Mow & edge lawn',                                      amt:20, cat:'house'},
+  {id:'xb2',text:'Rake leaves',                                          amt:12, cat:'house'},
+  {id:'xb3',text:'Weed garden beds',                                     amt:10, cat:'house'},
+  {id:'xb4',text:'Clean out garage (sweep & organize)',                  amt:15, cat:'house'},
+  {id:'xb5',text:'Shovel driveway/walkways',                             amt:15, cat:'house'},
+  {id:'xb6',text:'Wash windows outside',                                 amt:10, cat:'house'},
+];
+const PROJECTS = [
+  {id:'xp1',text:'Move firewood to other side of yard',                  amt:20},
+];
+
+const GRADE_TIERS = [
+  {gpa:'3.5',  label:'3.5',  amt:0,   floor:true},
+  {gpa:'3.75', label:'3.75', amt:50},
+  {gpa:'4.0',  label:'4.0',  amt:75},
+  {gpa:'4.5',  label:'4.5+', amt:100},
+];
+
+function extrasFor(t){ return [...EXTRAS_SHARED, ...(t==='a'?EXTRAS_A:EXTRAS_B)]; }
+
+// ─── STATE ────────────────────────────────────────────────────────────────────
+
+function getWeekStartStr(){
+  const d=new Date(), day=d.getDay(), diff=d.getDate()-day;
+  return new Date(new Date().setDate(diff)).toISOString().split('T')[0];
+}
+
+function freshKidState(t){
+  return {done:{},claimed:{},grade:null,allowance:KIDS[t].allowance,weekStart:getWeekStartStr()};
+}
+
+let state = {
+  a: freshKidState('a'),
+  b: freshKidState('b'),
+  alertDismissed: false,
+  lastSync: null
+};
+
+let currentView = 'a';
+let unsubA = null, unsubB = null, unsubMeta = null;
+
+// ─── FIREBASE SYNC ────────────────────────────────────────────────────────────
+
+function setSyncStatus(status){
+  const dot = document.getElementById('sync-dot');
+  dot.className = 'sync-dot' + (status==='live'?' live':status==='err'?' err':'');
+  dot.title = status==='live'?'Live — syncing':'Sync error';
+}
+
+function getWeekDoc(t){
+  const weekKey = getWeekStartStr();
+  return window._doc(window._db, 'homebase', `${t}_${weekKey}`);
+}
+function getMetaDoc(){
+  return window._doc(window._db, 'homebase', 'meta');
+}
+
+async function pushState(t){
+  try {
+    const s = state[t];
+    await window._setDoc(getWeekDoc(t), {
+      done: s.done,
+      claimed: s.claimed,
+      grade: s.grade || null,
+      allowance: s.allowance,
+      weekStart: s.weekStart,
+      updatedAt: window._serverTimestamp()
+    });
+    setSyncStatus('live');
+    state.lastSync = new Date();
+  } catch(e){
+    console.error('Firestore write error', e);
+    setSyncStatus('err');
+  }
+}
+
+async function pushMeta(){
+  try {
+    await window._setDoc(getMetaDoc(), {
+      alertDismissed: state.alertDismissed,
+      updatedAt: window._serverTimestamp()
+    }, {merge:true});
+  } catch(e){ console.error('Meta write error', e); }
+}
+
+function subscribeToFirestore(){
+  // Subscribe to each kid's week doc
+  ['a','b'].forEach(t => {
+    const unsub = window._onSnapshot(getWeekDoc(t), snap => {
+      if(snap.exists()){
+        const data = snap.data();
+        // Auto-reset if new week
+        if(data.weekStart && data.weekStart !== getWeekStartStr()){
+          state[t] = freshKidState(t);
+          pushState(t);
+        } else {
+          state[t] = {
+            done: data.done || {},
+            claimed: data.claimed || {},
+            grade: data.grade || null,
+            allowance: data.allowance || KIDS[t].allowance,
+            weekStart: data.weekStart || getWeekStartStr()
+          };
+        }
+      } else {
+        // First run — push fresh state
+        state[t] = freshKidState(t);
+        pushState(t);
+      }
+      setSyncStatus('live');
+      if(currentView===t) renderKid(t);
+      if(currentView==='p') renderParent();
+    }, err => { console.error(err); setSyncStatus('err'); });
+    if(t==='a') unsubA=unsub; else unsubB=unsub;
+  });
+
+  // Subscribe to meta
+  unsubMeta = window._onSnapshot(getMetaDoc(), snap => {
+    if(snap.exists()){
+      const data = snap.data();
+      state.alertDismissed = data.alertDismissed || false;
+    }
+    checkAlerts();
+  });
+}
+
+// ─── COMPUTED ─────────────────────────────────────────────────────────────────
+
+function getStats(t){
+  const s = state[t];
+  const chores = CHORES[t];
+  const doneCount = chores.filter(c=>s.done[c.id]).length;
+  const total = chores.length;
+  const pct = total>0 ? doneCount/total : 0;
+  const allowance = s.allowance || KIDS[t].allowance;
+  const allowEarned = Math.round(pct*allowance);
+  const allExtras = [...extrasFor(t), ...PROJECTS];
+  const extrasEarned = allExtras.filter(e=>s.claimed[e.id]).reduce((sum,e)=>sum+e.amt,0);
+  const tier = GRADE_TIERS.find(g=>g.gpa===s.grade);
+  const gradeBonus = (tier&&!tier.floor)?tier.amt:0;
+  const totalExtras = extrasEarned+gradeBonus;
+  const claimedList = allExtras.filter(e=>s.claimed[e.id]);
+  return {doneCount,total,pct,allowEarned,extrasEarned,gradeBonus,totalExtras,claimedList,allowance};
+}
+
+// ─── RENDER KID ───────────────────────────────────────────────────────────────
+
+function chkSVG(){ return `<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`; }
+
+function renderKid(t){
+  const isA = t==='a';
+  const s = state[t];
+  const stats = getStats(t);
+  const pct = Math.round(stats.pct*100);
+  const valC = isA?'val-purple':'val-teal';
+  const pfC  = isA?'pf-a':'pf-b';
+  const chkC = isA?'chk-a':'chk-b';
+  const amtC = isA?'ea-a':'ea-b';
+  const selC = isA?'sel-a':'sel-b';
+  const uniqBadge = isA?'b-a':'b-b';
+  const uniqLabel = isA?'Addison only':'Bryson only';
+
+  const allowVal = s.allowance||KIDS[t].allowance;
+
+  let h = `
+  <div class="main">
+  <div class="summary-grid">
+    <div class="summary-card">
+      <div class="s-label">Chores done</div>
+      <div class="s-value ${valC}">${stats.doneCount}<span style="font-size:16px;font-weight:400;color:var(--text3)">/${stats.total}</span></div>
+      <div class="s-sub">${pct}% complete</div>
+    </div>
+    <div class="summary-card">
+      <div class="s-label">Allowance earned</div>
+      <div class="s-value ${valC}">$${stats.allowEarned}</div>
+      <div class="s-sub">of $<input type="number" value="${allowVal}" min="0" step="1" style="width:44px;font-size:11px;border:1px solid var(--border);border-radius:4px;padding:1px 3px;color:var(--text2);background:var(--bg);" onchange="updateAllowance('${t}',this.value)"> max</div>
+    </div>
+    <div class="summary-card">
+      <div class="s-label">Extras earned</div>
+      <div class="s-value ${valC}">$${stats.totalExtras}</div>
+      <div class="s-sub">this week</div>
+    </div>
+  </div>
+  <div class="prog-wrap">
+    <div class="prog-labels"><span>Weekly chore progress</span><span>${stats.doneCount} of ${stats.total} done</span></div>
+    <div class="prog-track"><div class="prog-fill ${pfC}" style="width:${pct}%"></div></div>
+  </div>`;
+
+  // Chores
+  h += `<div class="section"><div class="sec-head"><span>Weekly chores</span><span>${stats.doneCount}/${stats.total}</span></div>`;
+  CHORES[t].forEach(c=>{
+    const done=!!s.done[c.id];
+    let badge='';
+    if(c.type==='shared') badge=`<span class="badge b-shared">shared</span>`;
+    else if(c.type==='unique') badge=`<span class="badge ${uniqBadge}">${uniqLabel}</span>`;
+    else if(c.type==='school') badge=`<span class="badge b-school">school year</span>`;
+    h+=`<div class="chore-row${done?' done':''}" onclick="toggleChore('${t}','${c.id}')">
+      <div class="c-check ${done?chkC:''}">${done?chkSVG():''}</div>
+      <span class="c-name">${c.text}${badge}</span>
+      <span class="c-freq">${c.freq}</span>
+    </div>`;
+  });
+  h+=`</div>`;
+
+  // Extras — Household
+  const houseItems = [...EXTRAS_SHARED.filter(e=>e.cat==='house'), ...(isA?EXTRAS_A:EXTRAS_B)];
+  h+=`<div class="section"><div class="sec-head"><span>Extra earnings — household</span></div>`;
+  houseItems.forEach(e=>{
+    const done=!!s.claimed[e.id];
+    h+=`<div class="extra-row${done?' done':''}" onclick="toggleExtra('${t}','${e.id}')">
+      <div class="c-check ${done?chkC:''}">${done?chkSVG():''}</div>
+      <span class="c-name">${e.text}</span>
+      <span class="e-amt ${amtC}">+$${e.amt}</span>
+    </div>`;
+  });
+  h+=`</div>`;
+
+  // Extras — Learning
+  const learnItems = EXTRAS_SHARED.filter(e=>e.cat==='learning');
+  h+=`<div class="section"><div class="sec-head"><span>Extra earnings — learning</span></div>`;
+  learnItems.forEach(e=>{
+    const done=!!s.claimed[e.id];
+    h+=`<div class="extra-row${done?' done':''}" onclick="toggleExtra('${t}','${e.id}')">
+      <div class="c-check ${done?chkC:''}">${done?chkSVG():''}</div>
+      <span class="c-name">${e.text}</span>
+      <span class="e-amt ${amtC}">+$${e.amt}</span>
+    </div>`;
+  });
+
+  // Grade card
+  h+=`<div class="grade-card">
+    <div class="grade-head"><span class="grade-title">Quarterly grade bonus</span><span class="grade-sub">Tap your GPA to claim</span></div>
+    <div class="grade-tiers">`;
+  GRADE_TIERS.forEach(g=>{
+    const isActive=s.grade===g.gpa;
+    const tc=g.floor?'g-tier floor':`g-tier${isActive?' '+selC:''}`;
+    const ac=isActive&&!g.floor?`g-amt ${selC}`:'g-amt';
+    h+=`<div class="${tc}" onclick="${g.floor?'':` selectGrade('${t}','${g.gpa}')`}">
+      <div class="g-gpa">${g.label}</div>
+      <div class="${ac}">${g.floor?'baseline':'+$'+g.amt}</div>
+    </div>`;
+  });
+  h+=`</div></div></div>`;
+
+  // Special Projects
+  h+=`<div class="section"><div class="sec-head"><span>Special projects</span></div>`;
+  PROJECTS.forEach(e=>{
+    const done=!!s.claimed[e.id];
+    h+=`<div class="extra-row${done?' done':''}" onclick="toggleExtra('${t}','${e.id}')">
+      <div class="c-check ${done?chkC:''}">${done?chkSVG():''}</div>
+      <span class="c-name">${e.text} <span class="badge b-onetime">one-time</span></span>
+      <span class="e-amt ${amtC}">+$${e.amt}</span>
+    </div>`;
+  });
+  h+=`</div>`;
+
+  if(state.lastSync){
+    h+=`<div class="last-sync">Last synced ${state.lastSync.toLocaleTimeString()}</div>`;
+  }
+  h+=`</div>`;
+
+  document.getElementById('view-'+t).innerHTML=h;
+}
+
+// ─── RENDER PARENT ────────────────────────────────────────────────────────────
+
+function renderParent(){
+  const sA=getStats('a'), sB=getStats('b');
+  const totalPayout=sA.allowEarned+sA.totalExtras+sB.allowEarned+sB.totalExtras;
+
+  const weekStart=new Date(state.a.weekStart+'T00:00:00');
+  const weekEnd=new Date(weekStart); weekEnd.setDate(weekEnd.getDate()+6);
+  const fmt=d=>d.toLocaleDateString('en-US',{month:'short',day:'numeric'});
+
+  let h=`<div class="main">`;
+  h+=`<div style="font-size:13px;color:var(--text3);margin-bottom:1rem;">Week of ${fmt(weekStart)} – ${fmt(weekEnd)}</div>`;
+  h+=`<div class="payout-bar"><span class="pt-label">&#128181; Total family payout this week</span><span class="pt-val">$${totalPayout}</span></div>`;
+
+  // Kid summary cards
+  h+=`<div class="p-grid">`;
+  ['a','b'].forEach(t=>{
+    const stats=getStats(t);
+    const kid=KIDS[t];
+    const pct=Math.round(stats.pct*100);
+    const cc=t==='a'?'purple':'teal';
+    const pfc=t==='a'?'pf-a':'pf-b';
+    const pctC=pct>=80?'good':pct>=50?'warn':'';
+    h+=`<div class="p-card">
+      <div class="p-card-head">
+        <div class="p-card-name ${cc}">${kid.name}, ${kid.age}</div>
+        <div class="p-card-sub">Allowance up to $${stats.allowance}/week</div>
+      </div>
+      <div class="p-card-body">
+        <div class="p-row"><span class="pl">Chores completed</span><span class="pv ${pctC}">${stats.doneCount}/${stats.total} (${pct}%)</span></div>
+        <div class="p-row"><span class="pl">Allowance earned</span><span class="pv ${cc}">$${stats.allowEarned}</span></div>
+        <div class="p-row"><span class="pl">Extra chores</span><span class="pv ${cc}">$${stats.extrasEarned}</span></div>
+        <div class="p-row"><span class="pl">Grade bonus</span><span class="pv ${cc}">${stats.gradeBonus>0?'$'+stats.gradeBonus:'—'}</span></div>
+        <div class="p-row" style="border:none"><span class="pl" style="font-weight:600">Total owed</span><span class="pv ${cc}" style="font-size:16px">$${stats.allowEarned+stats.totalExtras}</span></div>
+        <div class="mini-prog"><div class="mini-fill ${pfc}" style="width:${pct}%"></div></div>
+      </div>
+    </div>`;
+  });
+  h+=`</div>`;
+
+  // Extras breakdown
+  h+=`<div class="p-grid">`;
+  ['a','b'].forEach(t=>{
+    const stats=getStats(t);
+    const kid=KIDS[t];
+    const s=state[t];
+    h+=`<div class="p-summary"><h3>${kid.name}'s extras & projects</h3>`;
+    if(stats.claimedList.length===0&&stats.gradeBonus===0){
+      h+=`<div class="no-extras">Nothing claimed yet.</div>`;
+    } else {
+      h+=`<div class="e-list">`;
+      stats.claimedList.forEach(e=>{
+        h+=`<div class="e-item"><span>${e.text}</span><span class="eamt">+$${e.amt}</span></div>`;
+      });
+      if(stats.gradeBonus>0){
+        const tier=GRADE_TIERS.find(g=>g.gpa===s.grade);
+        h+=`<div class="e-item"><span>Grade bonus (GPA ${tier.label})</span><span class="eamt">+$${stats.gradeBonus}</span></div>`;
+      }
+      h+=`</div>`;
+    }
+    h+=`</div>`;
+  });
+  h+=`</div>`;
+
+  // Outstanding chores
+  h+=`<div class="p-grid">`;
+  ['a','b'].forEach(t=>{
+    const s=state[t];
+    const kid=KIDS[t];
+    const outstanding=CHORES[t].filter(c=>
+      !s.done[c.id]&&(c.freq==='Daily'||c.freq.includes('week')||c.freq.includes('Sat')||c.freq.includes('Wed'))
+    );
+    h+=`<div class="p-summary"><h3>${kid.name}'s outstanding</h3>`;
+    if(outstanding.length===0){
+      h+=`<div class="no-extras">All recurring chores done! &#127881;</div>`;
+    } else {
+      h+=`<div class="e-list">`;
+      outstanding.forEach(c=>{
+        h+=`<div class="e-item"><span>${c.text}</span><span style="font-size:11px;color:var(--text3)">${c.freq}</span></div>`;
+      });
+      h+=`</div>`;
+    }
+    h+=`</div>`;
+  });
+  h+=`</div>`;
+
+  // Controls
+  h+=`<div class="divider"></div>
+  <div class="sec-head" style="margin-bottom:1rem;">Parent controls</div>
+  <div class="btn-row">
+    <button class="btn btn-notif" onclick="requestNotif()">&#128276; Enable reminders</button>
+    <button class="btn btn-danger" onclick="resetKid('a')">Reset Addison's week</button>
+    <button class="btn btn-danger" onclick="resetKid('b')">Reset Bryson's week</button>
+    <button class="btn btn-danger" onclick="resetAll()">Reset full week</button>
+  </div>`;
+
+  if(state.lastSync){
+    h+=`<div class="last-sync">Last synced with Firebase: ${state.lastSync.toLocaleTimeString()}</div>`;
+  }
+  h+=`</div>`;
+
+  document.getElementById('view-p').innerHTML=h;
+}
+
+// ─── ACTIONS ──────────────────────────────────────────────────────────────────
+
+function toggleChore(t,id){
+  state[t].done[id]=!state[t].done[id];
+  renderKid(t);
+  pushState(t);
+}
+
+function toggleExtra(t,id){
+  state[t].claimed[id]=!state[t].claimed[id];
+  renderKid(t);
+  pushState(t);
+}
+
+function selectGrade(t,gpa){
+  state[t].grade=state[t].grade===gpa?null:gpa;
+  renderKid(t);
+  pushState(t);
+}
+
+function updateAllowance(t,val){
+  state[t].allowance=parseInt(val)||KIDS[t].allowance;
+  renderKid(t);
+  pushState(t);
+}
+
+function resetKid(t){
+  if(!confirm(`Reset ${KIDS[t].name}'s week? This clears all checked items.`)) return;
+  state[t]=freshKidState(t);
+  pushState(t);
+  if(currentView===t) renderKid(t);
+  else renderParent();
+}
+
+function resetAll(){
+  if(!confirm('Reset the full week for both kids?')) return;
+  ['a','b'].forEach(t=>{ state[t]=freshKidState(t); pushState(t); });
+  state.alertDismissed=false;
+  pushMeta();
+  renderParent();
+}
+
+function dismissAlert(){
+  state.alertDismissed=true;
+  pushMeta();
+  document.getElementById('alert-bar').classList.add('hidden');
+}
+
+// ─── ALERTS ───────────────────────────────────────────────────────────────────
+
+function checkAlerts(){
+  const now=new Date(), day=now.getDay(), hour=now.getHours();
+  const isSat=day===6&&hour>=8&&hour<20;
+  const isSun=day===0&&hour>=8&&hour<18;
+  if((isSat||isSun)&&!state.alertDismissed){
+    const msg=isSat
+      ?'<strong>Week ends tomorrow!</strong> Check any outstanding chores for Addison and Bryson.'
+      :'<strong>Last day of the week!</strong> Any remaining chores need to be done today.';
+    document.getElementById('alert-text').innerHTML=msg;
+    document.getElementById('alert-bar').classList.remove('hidden');
+    if(Notification&&Notification.permission==='granted'){
+      new Notification('Homebase — Week Ending Soon',{
+        body:isSat?'Check outstanding chores — week ends tomorrow!':'Last day! Remaining chores need to be done today.'
+      });
+    }
+  } else {
+    document.getElementById('alert-bar').classList.add('hidden');
+  }
+}
+
+function requestNotif(){
+  if(!('Notification' in window)){ alert('Notifications not supported on this device.'); return; }
+  Notification.requestPermission().then(p=>{
+    if(p==='granted') alert('Reminders enabled! You\'ll be notified Saturday and Sunday mornings.');
+    else alert('Permission denied. Enable notifications in your browser settings.');
+  });
+}
+
+// ─── NAV ──────────────────────────────────────────────────────────────────────
+
+function showView(v){
+  currentView=v;
+  ['a','b','p'].forEach(x=>{
+    document.getElementById('view-'+x).style.display=x===v?'':'none';
+    const tab=document.getElementById('tab-'+x);
+    tab.className='nav-tab'+(x===v?(x==='p'?' act-p':' act-'+x):'');
+  });
+  if(v==='p') renderParent();
+  else renderKid(v);
+}
+
+// ─── CONNECTIVITY ─────────────────────────────────────────────────────────────
+
+window.addEventListener('online',  ()=>document.getElementById('offline-bar').classList.remove('show'));
+window.addEventListener('offline', ()=>document.getElementById('offline-bar').classList.add('show'));
+
+// ─── BOOT ─────────────────────────────────────────────────────────────────────
+
+document.addEventListener('firebase-ready', ()=>{
+  setSyncStatus('live');
+  subscribeToFirestore();
+  setInterval(checkAlerts, 60*60*1000);
+  showView('a');
+});
+
+// Fallback if Firebase config not yet filled in
+setTimeout(()=>{
+  if(!window._firebaseReady){
+    setSyncStatus('err');
+    document.querySelectorAll('.loading').forEach(el=>{
+      el.innerHTML='<div style="color:var(--red-dark);font-size:14px;text-align:center;padding:2rem;">&#9888; Firebase not configured yet.<br><span style="font-size:12px;color:var(--text3)">Swap in your credentials in the &lt;script type="module"&gt; block at the top of the file.</span></div>';
+    });
+  }
+}, 5000);
+</script>
+
+<!-- ─── FIREBASE SETUP GUIDE ───────────────────────────────────────────────────
+
+STEP-BY-STEP: Getting this running on Firebase + Netlify
+==========================================================
+
+STEP 1 — Create a Firebase project (skip if adding to existing project)
+  1. Go to https://console.firebase.google.com
+  2. Click "Add project" → name it (e.g. "homebase") → Continue
+  3. Disable Google Analytics if you don't need it → Create project
+
+STEP 2 — Enable Firestore
+  1. In your project, click "Firestore Database" in the left sidebar
+  2. Click "Create database"
+  3. Choose "Start in test mode" (we'll secure it next) → Next
+  4. Pick your region (us-east1 or us-central1 recommended) → Enable
+
+STEP 3 — Set Firestore security rules
+  In Firestore → Rules tab, replace the default rules with:
+
+  rules_version = '2';
+  service cloud.firestore {
+    match /databases/{database}/documents {
+      match /homebase/{document=**} {
+        allow read, write: if true;
+      }
+    }
+  }
+
+  Click Publish. (This is open access — the family URL is your only protection,
+  which you chose. You can tighten this later if needed.)
+
+STEP 4 — Register a web app and get your config
+  1. In Firebase Console → Project Settings (gear icon) → Your apps
+  2. Click the </> web icon → Register app → name it "homebase-web"
+  3. Copy the firebaseConfig object shown — it looks like:
+       const firebaseConfig = {
+         apiKey: "AIza...",
+         authDomain: "your-project.firebaseapp.com",
+         projectId: "your-project",
+         ...
+       };
+  4. Paste those values into the firebaseConfig object at the TOP of this file,
+     replacing each "REPLACE_WITH_YOUR_..." placeholder.
+
+STEP 5 — Deploy to Netlify
+  Option A — Drag and drop (easiest):
+    1. Go to https://app.netlify.com → "Add new site" → "Deploy manually"
+    2. Drag this HTML file into the upload zone
+    3. Netlify gives you a URL like https://random-name.netlify.app
+    4. Rename the site in Site Settings → Site details → Site name
+
+  Option B — GitHub (recommended if you already use this for your other apps):
+    1. Put this file in a GitHub repo (name it index.html in the root)
+    2. In Netlify → "Add new site" → "Import an existing project" → Connect to GitHub
+    3. Select the repo → Deploy site
+    4. Every push to main auto-deploys
+
+STEP 6 — Share the URL
+  Share the Netlify URL with your family. Bookmark it on each device.
+  All state syncs in real time across every device via Firebase.
+
+STEP 7 — Enable Saturday/Sunday reminders (optional, per device)
+  Open the app → Parent Report → "Enable reminders" → Allow
+  Each device that grants permission gets a browser notification
+  Saturday morning and again Sunday morning when the week is ending.
+
+That's it. The app auto-resets every Sunday (new Firestore doc per week),
+so history is preserved — each week's data lives at homebase/a_YYYY-MM-DD
+and homebase/b_YYYY-MM-DD in Firestore if you ever want to look back.
+
+──────────────────────────────────────────────────────────────────────────── -->
+
+</body>
+</html>
