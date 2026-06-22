@@ -130,6 +130,7 @@
   .b-b{background:var(--teal-bg);color:var(--teal-dark);}
   .b-school{background:var(--amber-bg);color:var(--amber-dark);}
   .b-onetime{background:var(--coral-bg);color:var(--coral-dark);}
+  .b-must{background:var(--red-bg);color:var(--red-dark);}
 
   /* EXTRA ROW */
   .extra-row{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--surface);margin-bottom:5px;cursor:pointer;transition:background .1s;user-select:none;}
@@ -267,11 +268,11 @@ const CHORES = {
     {id:'a6', text:'Help with family meals (cooking + cleanup)', freq:'Daily',                         type:'shared'},
     {id:'a7', text:'Vacuum main floor',                          freq:'Daily',                         type:'unique'},
     {id:'a8', text:'Exercise / practice / game / match',         freq:'Daily',                     type:'shared'},
-    {id:'a9', text:'Youth group',                                freq:'Weekly',                        type:'shared'},
-    {id:'a10',text:'Community volunteer hours (30 hrs min)',      freq:'Yearly',                        type:'shared'},
-    {id:'a11',text:'Prepare backpack & water bottle',            freq:'Sun–Thu evenings (school year)', type:'school'},
-    {id:'a12',text:'Own laundry (wash, dry, put away)',          freq:'Wed & Sat',                     type:'shared'},
-    {id:'a13',text:'Sheets & towels',                            freq:'Every Saturday',                type:'shared'},
+    {id:'a9', text:'Youth group',                                freq:'Weekly',                        type:'shared', nn:true},
+    {id:'a10',text:'Community volunteer hours (30 hrs min)',      freq:'Yearly',                        type:'shared', nn:true},
+    {id:'a11',text:'Prepare backpack & water bottle',            freq:'Sun–Thu evenings (school year)', type:'school', days:[0,1,2,3,4]},
+    {id:'a12',text:'Own laundry (wash, dry, put away)',          freq:'Wed & Sat',                     type:'shared', days:[3,6]},
+    {id:'a13',text:'Sheets & towels',                            freq:'Every Saturday',                type:'shared', days:[6]},
     {id:'a14',text:'Full bedroom clean',                         freq:'Every other Sat or Sun',        type:'shared'},
     {id:'a15',text:'Full bathroom clean (with Bryson)',          freq:'Every other Sat morning',       type:'shared'},
     {id:'a16',text:'Grocery run',                                freq:'2x/week',                       type:'unique'},
@@ -284,15 +285,15 @@ const CHORES = {
     {id:'b5', text:'Walk Bo',                                    freq:'Daily',                         type:'shared'},
     {id:'b6', text:'Help with family meals (cooking + cleanup)', freq:'Daily',                         type:'shared'},
     {id:'b7', text:'Exercise / practice / game / match',         freq:'Daily',                     type:'shared'},
-    {id:'b8', text:'Youth group',                                freq:'Weekly',                        type:'shared'},
-    {id:'b9', text:'Community volunteer hours (30 hrs min)',      freq:'Yearly',                        type:'shared'},
-    {id:'b10',text:'Prepare backpack & water bottle',            freq:'Sun–Thu evenings (school year)', type:'school'},
-    {id:'b11',text:'Own laundry (wash, dry, put away)',          freq:'Wed & Sat',                     type:'shared'},
-    {id:'b12',text:'Sheets & towels',                            freq:'Every Saturday',                type:'shared'},
+    {id:'b8', text:'Youth group',                                freq:'Weekly',                        type:'shared', nn:true},
+    {id:'b9', text:'Community volunteer hours (30 hrs min)',      freq:'Yearly',                        type:'shared', nn:true},
+    {id:'b10',text:'Prepare backpack & water bottle',            freq:'Sun–Thu evenings (school year)', type:'school', days:[0,1,2,3,4]},
+    {id:'b11',text:'Own laundry (wash, dry, put away)',          freq:'Wed & Sat',                     type:'shared', days:[3,6]},
+    {id:'b12',text:'Sheets & towels',                            freq:'Every Saturday',                type:'shared', days:[6]},
     {id:'b13',text:'Full bedroom clean',                         freq:'Every other Sat or Sun',        type:'shared'},
     {id:'b14',text:'Full bathroom clean (with Addison)',         freq:'Every other Sat morning',       type:'shared'},
-    {id:'b15',text:'Gather all household trash + put cans out',  freq:'Sun night & Wed night',         type:'unique'},
-    {id:'b16',text:'Bring trash cans in from street',            freq:'Mon morning & Thu morning',     type:'unique'},
+    {id:'b15',text:'Gather all household trash + put cans out',  freq:'Sun night & Wed night',         type:'unique', days:[0,3]},
+    {id:'b16',text:'Bring trash cans in from street',            freq:'Mon morning & Thu morning',     type:'unique', days:[1,4]},
   ]
 };
 
@@ -348,10 +349,19 @@ function getWeekStartStr(){
   return localDateStr(monday);
 }
 
-// Daily chores reset every day; everything else persists for the week.
+// Chore classification:
+//   daily      — every day (freq starts "Daily")
+//   scheduled  — pinned to specific weekdays via days:[…] (0=Sun..6=Sat); shows in Today's list on those days
+//   nonNeg     — must-do reminders (nn:true): no allowance, excluded from payout
+//   weekly     — everything else: persists until the Monday reset
 function isDaily(c){ return c.freq.startsWith('Daily'); }
-function dailyChores(t){ return CHORES[t].filter(isDaily); }
-function weeklyChores(t){ return CHORES[t].filter(c=>!isDaily(c)); }
+function isScheduled(c){ return Array.isArray(c.days) && c.days.length>0; }
+function isNonNeg(c){ return !!c.nn; }
+function occursOn(c, dayIdx){ return isDaily(c) ? true : (isScheduled(c) ? c.days.includes(dayIdx) : false); }
+// Per-day chores are tracked per calendar date (reset daily): every-day chores + day-pinned chores.
+function perDayChores(t){ return CHORES[t].filter(c=>!isNonNeg(c) && (isDaily(c)||isScheduled(c))); }
+function weeklyChores(t){ return CHORES[t].filter(c=>!isNonNeg(c) && !isDaily(c) && !isScheduled(c)); }
+function nonNegChores(t){ return CHORES[t].filter(isNonNeg); }
 
 // The 7 local date strings (Mon..Sun) for a given week-start date string.
 function weekDates(weekStartStr){
@@ -479,28 +489,35 @@ function subscribeToFirestore(){
 function getStats(t){
   const s = state[t];
   const weekly = weeklyChores(t);
-  const daily  = dailyChores(t);
+  const perDay = perDayChores(t);
+  const nonNeg = nonNegChores(t);
   const dates  = weekDates(s.weekStart);
   const today  = localDateStr();
+  const todayIdx = new Date().getDay();
 
   // Weekly chores — persist until the Monday reset.
   const weeklyDone  = weekly.filter(c=>s.done[c.id]).length;
   const weeklyTotal = weekly.length;
 
-  // Daily chores — counted across all 7 days of the week (denominator is always ×7).
-  let dailyDone = 0;
+  // Per-day chores — counted by actual occurrences this week (every-day = 7, day-pinned = its days).
+  let dailyDone = 0, dailyPossible = 0;
   dates.forEach(date=>{
+    const dayIdx = new Date(date+'T00:00:00').getDay();
     const dmap = (s.daily && s.daily[date]) || {};
-    daily.forEach(c=>{ if(dmap[c.id]) dailyDone++; });
+    perDay.forEach(c=>{ if(occursOn(c, dayIdx)){ dailyPossible++; if(dmap[c.id]) dailyDone++; } });
   });
-  const dailyPossible = daily.length * 7;
 
-  // Today's daily snapshot — what the kid sees on their own tab.
+  // Today's snapshot — only the per-day chores that occur today.
+  const todayChores = perDay.filter(c=>occursOn(c, todayIdx));
   const todayMap   = (s.daily && s.daily[today]) || {};
-  const todayDone  = daily.filter(c=>todayMap[c.id]).length;
-  const todayTotal = daily.length;
+  const todayDone  = todayChores.filter(c=>todayMap[c.id]).length;
+  const todayTotal = todayChores.length;
 
-  // Combined pool drives allowance: daily instances + weekly chores, one big percentage.
+  // Non-negotiables — must-do reminders, NOT counted toward allowance.
+  const nonNegDone  = nonNeg.filter(c=>s.done[c.id]).length;
+  const nonNegTotal = nonNeg.length;
+
+  // Combined pool drives allowance: per-day occurrences + weekly chores (non-negotiables excluded).
   const totalDone     = weeklyDone + dailyDone;
   const totalPossible = weeklyTotal + dailyPossible;
   const pct = totalPossible>0 ? totalDone/totalPossible : 0;
@@ -516,7 +533,7 @@ function getStats(t){
   const tier = GRADE_TIERS.find(g=>g.gpa===s.grade);
   const gradeBonus = (tier&&!tier.floor)?tier.amt:0;
   const totalExtras = extrasEarned+gradeBonus;
-  return {weeklyDone,weeklyTotal,dailyDone,dailyPossible,todayDone,todayTotal,
+  return {weeklyDone,weeklyTotal,dailyDone,dailyPossible,todayDone,todayTotal,nonNegDone,nonNegTotal,
           totalDone,totalPossible,pct,allowEarned,extrasEarned,gradeBonus,totalExtras,claimedList,allowance};
 }
 
@@ -568,11 +585,16 @@ function renderKid(t){
     <div class="prog-track"><div class="prog-fill ${pfC}" style="width:${weeklyPct}%"></div></div>
   </div>`;
 
-  // Today's chores — daily list, resets every day (tracked per calendar date)
+  // Today's chores — per-day list (every-day + day-pinned chores), resets daily, tracked per calendar date
   const today = localDateStr();
+  const todayIdx = new Date().getDay();
   const todayMap = (s.daily && s.daily[today]) || {};
+  const todayChores = perDayChores(t).filter(c=>occursOn(c, todayIdx));
   h += `<div class="section"><div class="sec-head"><span>Today's chores · ${todayLabel}</span><span>${stats.todayDone}/${stats.todayTotal}</span></div>`;
-  dailyChores(t).forEach(c=>{
+  if(todayChores.length===0){
+    h+=`<div class="chore-row" style="cursor:default;"><span class="c-name" style="color:var(--text3);font-style:italic;">No chores scheduled for today.</span></div>`;
+  }
+  todayChores.forEach(c=>{
     const done=!!todayMap[c.id];
     let badge='';
     if(c.type==='shared') badge=`<span class="badge b-shared">shared</span>`;
@@ -585,6 +607,21 @@ function renderKid(t){
     </div>`;
   });
   h+=`</div>`;
+
+  // Non-negotiables — must-do reminders, no allowance (checkable, but excluded from payout)
+  const nn = nonNegChores(t);
+  if(nn.length){
+    h += `<div class="section"><div class="sec-head"><span>Non-negotiables · no allowance</span><span>${stats.nonNegDone}/${stats.nonNegTotal}</span></div>`;
+    nn.forEach(c=>{
+      const done=!!s.done[c.id];
+      h+=`<div class="chore-row${done?' done':''}" onclick="toggleChore('${t}','${c.id}')">
+        <div class="c-check ${done?chkC:''}">${done?chkSVG():''}</div>
+        <span class="c-name">${c.text}<span class="badge b-must">must do</span></span>
+        <span class="c-freq">${c.freq}</span>
+      </div>`;
+    });
+    h+=`</div>`;
+  }
 
   // Weekly chores — persist (stay checked) until the Monday reset
   h += `<div class="section"><div class="sec-head"><span>Weekly chores</span><span>${stats.weeklyDone}/${stats.weeklyTotal}</span></div>`;
@@ -667,8 +704,9 @@ function renderKid(t){
 // 7-day grid (Mon..Sun) of a kid's daily chores. Today's column is highlighted.
 function dailyGridHTML(t){
   const s=state[t], kid=KIDS[t];
-  const daily=dailyChores(t);
+  const perDay=perDayChores(t);
   const dates=weekDates(s.weekStart);
+  const idxs=dates.map(d=>new Date(d+'T00:00:00').getDay());
   const today=localDateStr();
   const labels=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
   const cc=t==='a'?'purple':'teal';
@@ -678,27 +716,33 @@ function dailyGridHTML(t){
   labels.forEach((lab,i)=>{ h+=`<th class="${dates[i]===today?'today':''}">${lab}</th>`; });
   h+=`<th class="ctot">✓</th></tr></thead><tbody>`;
 
-  daily.forEach(c=>{
+  // One row per chore — cells only on the days it occurs (off-days left blank).
+  perDay.forEach(c=>{
     h+=`<tr><td class="cname" title="${c.text}">${c.text}</td>`;
-    let cnt=0;
-    dates.forEach(date=>{
-      const done=!!((s.daily&&s.daily[date])||{})[c.id];
-      if(done) cnt++;
-      h+=`<td class="${date===today?'today ':''}${done?'cell-done':'cell-miss'}">${done?'✓':'·'}</td>`;
+    let done=0, poss=0;
+    dates.forEach((date,i)=>{
+      let cell='';
+      if(occursOn(c, idxs[i])){
+        poss++;
+        const ok=!!((s.daily&&s.daily[date])||{})[c.id];
+        if(ok) done++;
+        cell=`<span class="${ok?'cell-done':'cell-miss'}">${ok?'✓':'·'}</span>`;
+      }
+      h+=`<td class="${date===today?'today':''}">${cell}</td>`;
     });
-    h+=`<td class="ctot">${cnt}/7</td></tr>`;
+    h+=`<td class="ctot">${done}/${poss}</td></tr>`;
   });
 
-  // Per-day totals
-  let grand=0;
+  // Per-day totals (occurrences completed each day)
+  let grandDone=0, grandPoss=0;
   h+=`<tr class="dg-total"><td class="cname">Daily total</td>`;
-  dates.forEach(date=>{
+  dates.forEach((date,i)=>{
     const dmap=(s.daily&&s.daily[date])||{};
-    const c=daily.filter(ch=>dmap[ch.id]).length;
-    grand+=c;
-    h+=`<td class="${date===today?'today ':''}ctot">${c}</td>`;
+    let dd=0;
+    perDay.forEach(c=>{ if(occursOn(c, idxs[i])){ grandPoss++; if(dmap[c.id]){ dd++; grandDone++; } } });
+    h+=`<td class="${date===today?'today ':''}ctot">${dd}</td>`;
   });
-  h+=`<td class="ctot">${grand}/${daily.length*7}</td></tr>`;
+  h+=`<td class="ctot">${grandDone}/${grandPoss}</td></tr>`;
   h+=`</tbody></table></div></div>`;
   return h;
 }
@@ -728,6 +772,7 @@ function renderParent(){
       <div class="p-card-body">
         <div class="p-row"><span class="pl">Daily chores (this wk)</span><span class="pv">${stats.dailyDone}/${stats.dailyPossible}</span></div>
         <div class="p-row"><span class="pl">Weekly chores</span><span class="pv ${pctC}">${stats.weeklyDone}/${stats.weeklyTotal}</span></div>
+        ${stats.nonNegTotal?`<div class="p-row"><span class="pl">Non-negotiables</span><span class="pv">${stats.nonNegDone}/${stats.nonNegTotal} <span style="color:var(--text3);font-weight:400;">no $</span></span></div>`:''}
         <div class="p-row"><span class="pl">Allowance earned</span><span class="pv ${cc}">$${stats.allowEarned}</span></div>
         <div class="p-row"><span class="pl">Extra chores</span><span class="pv ${cc}">$${stats.extrasEarned}</span></div>
         <div class="p-row"><span class="pl">Grade bonus</span><span class="pv ${cc}">${stats.gradeBonus>0?'$'+stats.gradeBonus:'—'}</span></div>
