@@ -31,6 +31,7 @@
   // /homebase/b_YYYY-MM-DD  → Bryson's week
   // /homebase/meta          → alert dismissed flag + persistent one-time project claims
   // /homebase/chores        → editable chore list (seeded from CHORES_SEED; edited via Master tab)
+  // /homebase/extras        → editable extra-earnings list (seeded from EXTRAS_SEED; edited via Master tab)
 
   window._db = db;
   window._doc = doc;
@@ -223,6 +224,7 @@
   .last-sync{font-size:11px;color:var(--text3);margin-top:1rem;text-align:center;}
 
   /* CHORE EDIT FORM (Master tab) */
+  .ext-amt{font-size:13px;font-weight:600;color:var(--green-dark);white-space:nowrap;flex-shrink:0;}
   .cf-lbl{font-size:12px;color:var(--text2);}
   .cf-in{width:100%;padding:7px;border:1px solid var(--border2);border-radius:6px;font-size:14px;background:var(--surface);color:var(--text);margin-top:3px;}
 
@@ -300,29 +302,27 @@ const CHORES_SEED = [
   {id:'c18',text:'Community volunteer hours (30 hrs min)',     person:'both', cat:'nonneg', freq:'Yearly'},
 ];
 
-const EXTRAS_SHARED = [
-  {id:'xs1',text:'Vacuum basement, upstairs & stairs',                   amt:15, cat:'house'},
-  {id:'xs2',text:'Steam clean hardwood + vacuum area rugs (main floor)', amt:10, cat:'house'},
-  {id:'xs3',text:'Wash & vacuum car',                                    amt:15, cat:'house'},
-  {id:'xs4',text:'Blowout garage, front walk & driveway',               amt:10, cat:'house'},
-  {id:'xs5',text:'Read a book (200+ pages)',                             amt:10, cat:'learning'},
-  {id:'xs6',text:'Complete a Khan Academy course',                       amt:25, cat:'learning'},
-  {id:'xs7',text:'Complete 2 Duolingo levels',                          amt:10, cat:'learning'},
-];
-const EXTRAS_A = [
-  {id:'xa1',text:'Deep clean kitchen (appliances, cabinets, counters)',  amt:12, cat:'house'},
-  {id:'xa2',text:'Organize pantry or a closet',                          amt:10, cat:'house'},
-  {id:'xa3',text:'Deep clean fridge & freezer',                          amt:10, cat:'house'},
-  {id:'xa4',text:'Wash windows inside',                                  amt:10, cat:'house'},
-  {id:'xa5',text:'Prep & cook a full family meal solo',                  amt:15, cat:'house'},
-];
-const EXTRAS_B = [
-  {id:'xb1',text:'Mow & edge lawn',                                      amt:20, cat:'house'},
-  {id:'xb2',text:'Rake leaves',                                          amt:12, cat:'house'},
-  {id:'xb3',text:'Weed garden beds',                                     amt:10, cat:'house'},
-  {id:'xb4',text:'Clean out garage (sweep & organize)',                  amt:15, cat:'house'},
-  {id:'xb5',text:'Shovel driveway/walkways',                             amt:15, cat:'house'},
-  {id:'xb6',text:'Wash windows outside',                                 amt:10, cat:'house'},
+// Extra-earnings list (bonus $ on top of allowance). Editable from the Master tab; seeds homebase/extras.
+//   person:'a'|'b'|'both'   cat:'house'|'learning'   amt: dollars
+const EXTRAS_SEED = [
+  {id:'xs1', text:'Vacuum basement, upstairs & stairs',                   amt:15, cat:'house',    person:'both'},
+  {id:'xs2', text:'Steam clean hardwood + vacuum area rugs (main floor)', amt:10, cat:'house',    person:'both'},
+  {id:'xs3', text:'Wash & vacuum car',                                    amt:15, cat:'house',    person:'both'},
+  {id:'xs4', text:'Blowout garage, front walk & driveway',               amt:10, cat:'house',    person:'both'},
+  {id:'xs5', text:'Read a book (200+ pages)',                             amt:10, cat:'learning', person:'both'},
+  {id:'xs6', text:'Complete a Khan Academy course',                       amt:25, cat:'learning', person:'both'},
+  {id:'xs7', text:'Complete 2 Duolingo levels',                           amt:10, cat:'learning', person:'both'},
+  {id:'xa1', text:'Deep clean kitchen (appliances, cabinets, counters)',  amt:12, cat:'house',    person:'a'},
+  {id:'xa2', text:'Organize pantry or a closet',                          amt:10, cat:'house',    person:'a'},
+  {id:'xa3', text:'Deep clean fridge & freezer',                          amt:10, cat:'house',    person:'a'},
+  {id:'xa4', text:'Wash windows inside',                                  amt:10, cat:'house',    person:'a'},
+  {id:'xa5', text:'Prep & cook a full family meal solo',                  amt:15, cat:'house',    person:'a'},
+  {id:'xb1', text:'Mow & edge lawn',                                      amt:20, cat:'house',    person:'b'},
+  {id:'xb2', text:'Rake leaves',                                          amt:12, cat:'house',    person:'b'},
+  {id:'xb3', text:'Weed garden beds',                                     amt:10, cat:'house',    person:'b'},
+  {id:'xb4', text:'Clean out garage (sweep & organize)',                  amt:15, cat:'house',    person:'b'},
+  {id:'xb5', text:'Shovel driveway/walkways',                             amt:15, cat:'house',    person:'b'},
+  {id:'xb6', text:'Wash windows outside',                                 amt:10, cat:'house',    person:'b'},
 ];
 const PROJECTS = [
   {id:'xp1',text:'Move firewood to other side of yard',                  amt:20},
@@ -335,7 +335,9 @@ const GRADE_TIERS = [
   {gpa:'4.5',  label:'4.5+', amt:100},
 ];
 
-function extrasFor(t){ return [...EXTRAS_SHARED, ...(t==='a'?EXTRAS_A:EXTRAS_B)]; }
+// Live editable extras list (Firestore-backed), falling back to the seed before first load.
+function allExtras(){ return (state.extras && state.extras.length) ? state.extras : EXTRAS_SEED; }
+function getExtras(t){ return allExtras().filter(e=>e.person===t || e.person==='both'); }
 
 // ─── STATE ────────────────────────────────────────────────────────────────────
 
@@ -421,6 +423,7 @@ let state = {
   b: freshKidState('b'),
   projects: { a:{}, b:{} },   // persistent one-time project claims — stored in meta doc, NOT reset weekly
   chores: [],                 // live editable chore list — stored in homebase/chores, seeded from CHORES_SEED
+  extras: [],                 // live editable extra-earnings list — stored in homebase/extras, seeded from EXTRAS_SEED
   editMode: false,            // Master tab edit toggle (UI only, not persisted)
   editForm: null,             // in-progress add/edit chore form (UI only)
   schoolYear: true,           // global toggle — when false, school:true chores are hidden from daily lists (stored in meta)
@@ -429,7 +432,7 @@ let state = {
 };
 
 let currentView = 'a';
-let unsubA = null, unsubB = null, unsubMeta = null, unsubChores = null;
+let unsubA = null, unsubB = null, unsubMeta = null, unsubChores = null, unsubExtras = null;
 
 // ─── FIREBASE SYNC ────────────────────────────────────────────────────────────
 
@@ -449,12 +452,22 @@ function getMetaDoc(){
 function getChoresDoc(){
   return window._doc(window._db, 'homebase', 'chores');
 }
+function getExtrasDoc(){
+  return window._doc(window._db, 'homebase', 'extras');
+}
 
 async function pushChores(){
   try {
     await window._setDoc(getChoresDoc(), { list: state.chores, updatedAt: window._serverTimestamp() });
     setSyncStatus('live');
   } catch(e){ console.error('Chores write error', e); setSyncStatus('err'); }
+}
+
+async function pushExtras(){
+  try {
+    await window._setDoc(getExtrasDoc(), { list: state.extras, updatedAt: window._serverTimestamp() });
+    setSyncStatus('live');
+  } catch(e){ console.error('Extras write error', e); setSyncStatus('err'); }
 }
 
 async function pushState(t){
@@ -549,6 +562,19 @@ function subscribeToFirestore(){
     else if(currentView==='m') renderMaster();
     else renderKid(currentView);
   }, err => { console.error(err); setSyncStatus('err'); });
+
+  // Subscribe to the editable extra-earnings list — seed from EXTRAS_SEED on first run.
+  unsubExtras = window._onSnapshot(getExtrasDoc(), snap => {
+    if(snap.exists() && Array.isArray(snap.data().list) && snap.data().list.length){
+      state.extras = snap.data().list.filter(e=>e && validChoreId(e.id));
+    } else {
+      state.extras = EXTRAS_SEED.map(e=>({...e}));
+      pushExtras();
+    }
+    if(currentView==='p') renderParent();
+    else if(currentView==='m') renderMaster();
+    else renderKid(currentView);
+  }, err => { console.error(err); setSyncStatus('err'); });
 }
 
 // ─── COMPUTED ─────────────────────────────────────────────────────────────────
@@ -593,7 +619,7 @@ function getStats(t){
   // Weekly extras live in the per-week doc (reset every week); one-time projects live in meta (persistent).
   const projClaims = state.projects[t] || {};
   const claimedList = [
-    ...extrasFor(t).filter(e=>s.claimed[e.id]),
+    ...getExtras(t).filter(e=>s.claimed[e.id]),
     ...PROJECTS.filter(e=>projClaims[e.id])
   ];
   const extrasEarned = claimedList.reduce((sum,e)=>sum+e.amt,0);
@@ -697,27 +723,27 @@ function renderKid(t){
   h+=`</div>`;
 
   // Extras — Household
-  const houseItems = [...EXTRAS_SHARED.filter(e=>e.cat==='house'), ...(isA?EXTRAS_A:EXTRAS_B)];
+  const houseItems = getExtras(t).filter(e=>e.cat==='house');
   h+=`<div class="section"><div class="sec-head"><span>Extra earnings — household</span></div>`;
   houseItems.forEach(e=>{
     const done=!!s.claimed[e.id];
     h+=`<div class="extra-row${done?' done':''}" onclick="toggleExtra('${t}','${e.id}')">
       <div class="c-check ${done?chkC:''}">${done?chkSVG():''}</div>
-      <span class="c-name">${e.text}</span>
-      <span class="e-amt ${amtC}">+$${e.amt}</span>
+      <span class="c-name">${esc(e.text)}</span>
+      <span class="e-amt ${amtC}">+$${Number(e.amt)||0}</span>
     </div>`;
   });
   h+=`</div>`;
 
   // Extras — Learning
-  const learnItems = EXTRAS_SHARED.filter(e=>e.cat==='learning');
+  const learnItems = getExtras(t).filter(e=>e.cat==='learning');
   h+=`<div class="section"><div class="sec-head"><span>Extra earnings — learning</span></div>`;
   learnItems.forEach(e=>{
     const done=!!s.claimed[e.id];
     h+=`<div class="extra-row${done?' done':''}" onclick="toggleExtra('${t}','${e.id}')">
       <div class="c-check ${done?chkC:''}">${done?chkSVG():''}</div>
-      <span class="c-name">${e.text}</span>
-      <span class="e-amt ${amtC}">+$${e.amt}</span>
+      <span class="c-name">${esc(e.text)}</span>
+      <span class="e-amt ${amtC}">+$${Number(e.amt)||0}</span>
     </div>`;
   });
 
@@ -856,7 +882,7 @@ function renderParent(){
     } else {
       h+=`<div class="e-list">`;
       stats.claimedList.forEach(e=>{
-        h+=`<div class="e-item"><span>${e.text}</span><span class="eamt">+$${e.amt}</span></div>`;
+        h+=`<div class="e-item"><span>${esc(e.text)}</span><span class="eamt">+$${Number(e.amt)||0}</span></div>`;
       });
       if(stats.gradeBonus>0){
         const tier=GRADE_TIERS.find(g=>g.gpa===s.grade);
@@ -923,6 +949,10 @@ const MASTER_GROUPS = [
   {key:'nonneg',    label:'Non-negotiables — must do, no allowance'},
 ];
 const DAY_LABELS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+const EXTRA_GROUPS = [
+  {key:'house',    label:'Extra earnings — household'},
+  {key:'learning', label:'Extra earnings — learning'},
+];
 
 function whoBadge(person){
   return person==='a' ? `<span class="badge b-a">Addison</span>`
@@ -963,7 +993,7 @@ function renderMaster(){
 
   if(edit){
     h+=`<div class="btn-row" style="margin-bottom:1rem;"><button class="btn btn-notif" onclick="startAddChore()">&#43; Add chore</button></div>`;
-    if(state.editForm) h+=choreFormHTML();
+    if(state.editForm && state.editForm.kind!=='extra') h+=choreFormHTML();
   }
 
   let count=0;
@@ -991,8 +1021,66 @@ function renderMaster(){
     h+=`</div>`;
   });
   h+=`<div style="font-size:12px;color:var(--text3);margin-top:.5rem;">${count} chores total.</div>`;
+
+  // ── Extra earnings (editable bonus $) ──
+  h+=`<div class="divider"></div>`;
+  if(edit){
+    h+=`<div class="btn-row" style="margin-bottom:1rem;"><button class="btn btn-notif" onclick="startAddExtra()">&#43; Add extra</button></div>`;
+    if(state.editForm && state.editForm.kind==='extra') h+=extraFormHTML();
+  }
+  const extras=allExtras();
+  let ecount=0;
+  EXTRA_GROUPS.forEach(g=>{
+    const items=extras.filter(e=>e.cat===g.key);
+    if(!items.length) return;
+    h+=`<div class="section"><div class="sec-head"><span>${g.label}</span><span>${items.length}</span></div>`;
+    items.forEach(e=>{
+      ecount++;
+      const right = edit
+        ? `<span style="display:flex;gap:6px;flex-shrink:0;">
+             <button class="btn" style="padding:4px 10px;font-size:12px;" onclick="startEditExtra('${e.id}')">Edit</button>
+             <button class="btn btn-danger" style="padding:4px 10px;font-size:12px;" onclick="deleteExtra('${e.id}')">Delete</button>
+           </span>`
+        : `<span class="ext-amt">+$${Number(e.amt)||0}</span>`;
+      h+=`<div class="chore-row" style="cursor:default;">
+        <span class="c-name">${esc(e.text)} ${whoBadge(e.person)}</span>
+        ${right}
+      </div>`;
+    });
+    h+=`</div>`;
+  });
+  h+=`<div style="font-size:12px;color:var(--text3);margin-top:.5rem;">${ecount} extra-earning items.</div>`;
+
   h+=`</div>`;
   document.getElementById('view-m').innerHTML=h;
+}
+
+// Inline add/edit form for an extra-earnings item.
+function extraFormHTML(){
+  const f=state.editForm;
+  const sel=(v,want)=>String(v)===String(want)?'selected':'';
+  return `<div class="p-summary" style="border:1px solid var(--purple-border);">
+    <h3 class="purple">${f.id?'Edit extra':'Add extra'}</h3>
+    <div style="display:flex;flex-direction:column;gap:12px;">
+      <label class="cf-lbl">Description<br><input id="ef-text" type="text" value="${esc(f.text)}" placeholder="e.g. Wash & vacuum car" class="cf-in"></label>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;">
+        <label class="cf-lbl" style="flex:1;min-width:120px;">Person<br><select id="ef-person" class="cf-in">
+          <option value="both" ${sel(f.person,'both')}>Both</option>
+          <option value="a" ${sel(f.person,'a')}>Addison</option>
+          <option value="b" ${sel(f.person,'b')}>Bryson</option>
+        </select></label>
+        <label class="cf-lbl" style="flex:1;min-width:120px;">Category<br><select id="ef-cat" class="cf-in">
+          <option value="house" ${sel(f.cat,'house')}>Household</option>
+          <option value="learning" ${sel(f.cat,'learning')}>Learning</option>
+        </select></label>
+        <label class="cf-lbl" style="flex:1;min-width:90px;">Amount $<br><input id="ef-amt" type="number" min="0" step="1" value="${Number(f.amt)||0}" class="cf-in"></label>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-notif" onclick="saveExtra()">Save</button>
+        <button class="btn" onclick="cancelChore()">Cancel</button>
+      </div>
+    </div>
+  </div>`;
 }
 
 // Inline add/edit form. Values are read from the DOM on save (so typing never re-renders).
@@ -1115,13 +1203,13 @@ function toggleEditMode(){ state.editMode=!state.editMode; if(!state.editMode) s
 function toggleSchoolYear(){ state.schoolYear=!state.schoolYear; pushMeta(); renderMaster(); }
 
 function startAddChore(){
-  state.editForm={ id:null, text:'', person:'both', cat:'daily', days:[], parity:0, school:false };
+  state.editForm={ kind:'chore', id:null, text:'', person:'both', cat:'daily', days:[], parity:0, school:false };
   renderMaster();
 }
 
 function startEditChore(id){
   const c=allChores().find(x=>x.id===id); if(!c) return;
-  state.editForm={ id:c.id, text:c.text, person:c.person, cat:c.cat, days:(c.days||[]).slice(), parity:c.parity||0, school:!!c.school };
+  state.editForm={ kind:'chore', id:c.id, text:c.text, person:c.person, cat:c.cat, days:(c.days||[]).slice(), parity:c.parity||0, school:!!c.school };
   renderMaster();
 }
 
@@ -1169,6 +1257,48 @@ function deleteChore(id){
   state.chores=state.chores.filter(c=>c.id!==id);
   if(state.editForm && state.editForm.id===id) state.editForm=null;
   pushChores();
+  renderMaster();
+}
+
+// ── Extra-earnings editing (Master tab) ──
+function newExtraId(){ return 'x' + Date.now().toString(36) + Math.floor(Math.random()*46656).toString(36); }
+
+function startAddExtra(){
+  state.editForm={ kind:'extra', id:null, text:'', person:'both', cat:'house', amt:10 };
+  renderMaster();
+}
+
+function startEditExtra(id){
+  const e=allExtras().find(x=>x.id===id); if(!e) return;
+  state.editForm={ kind:'extra', id:e.id, text:e.text, person:e.person, cat:e.cat, amt:e.amt };
+  renderMaster();
+}
+
+function saveExtra(){
+  const text=document.getElementById('ef-text').value.trim();
+  if(!text){ alert('Give the extra a description.'); return; }
+  const person=document.getElementById('ef-person').value;
+  const cat=document.getElementById('ef-cat').value;
+  const amt=Math.max(0, parseInt(document.getElementById('ef-amt').value)||0);
+
+  const rec={ id: state.editForm.id || newExtraId(), text, person, cat, amt };
+  if(!validChoreId(rec.id)){ alert('Invalid id — not saved.'); return; }
+  if(!Array.isArray(state.extras) || !state.extras.length) state.extras=allExtras().map(e=>({...e}));
+  const i=state.extras.findIndex(e=>e.id===rec.id);
+  if(i>=0) state.extras[i]=rec; else state.extras.push(rec);
+
+  state.editForm=null;
+  pushExtras();
+  renderMaster();
+}
+
+function deleteExtra(id){
+  const e=allExtras().find(x=>x.id===id);
+  if(!confirm(`Delete "${e?e.text:'this item'}"? This removes it for both kids.`)) return;
+  if(!Array.isArray(state.extras) || !state.extras.length) state.extras=allExtras().map(e=>({...e}));
+  state.extras=state.extras.filter(e=>e.id!==id);
+  if(state.editForm && state.editForm.id===id) state.editForm=null;
+  pushExtras();
   renderMaster();
 }
 
