@@ -30,6 +30,7 @@
   // /homebase/a_YYYY-MM-DD  → Addison's week (Monday's date). Holds weekly `done` + per-date `daily` maps.
   // /homebase/b_YYYY-MM-DD  → Bryson's week
   // /homebase/meta          → alert dismissed flag + persistent one-time project claims
+  // /homebase/chores        → editable chore list (seeded from CHORES_SEED; edited via Master tab)
 
   window._db = db;
   window._doc = doc;
@@ -216,6 +217,10 @@
 
   .last-sync{font-size:11px;color:var(--text3);margin-top:1rem;text-align:center;}
 
+  /* CHORE EDIT FORM (Master tab) */
+  .cf-lbl{font-size:12px;color:var(--text2);}
+  .cf-in{width:100%;padding:7px;border:1px solid var(--border2);border-radius:6px;font-size:14px;background:var(--surface);color:var(--text);margin-top:3px;}
+
   @media(max-width:600px){
     .p-grid{grid-template-columns:1fr;}
     .grade-tiers{grid-template-columns:repeat(2,1fr);}
@@ -260,44 +265,35 @@ const KIDS = {
   b: { name:'Bryson',  age:14, allowance:20 }
 };
 
-const CHORES = {
-  a:[
-    {id:'a1', text:'Make bed',                                   freq:'Daily',                         type:'shared'},
-    {id:'a2', text:'Personal hygiene routine',                   freq:'Daily',                         type:'shared'},
-    {id:'a3', text:'Prayers & devotionals',                      freq:'Daily',                         type:'shared'},
-    {id:'a4', text:'Complete schoolwork',                        freq:'Daily (school year)',            type:'school'},
-    {id:'a5', text:'Walk Bo',                                    freq:'Daily',                         type:'shared'},
-    {id:'a6', text:'Help with family meals (cooking + cleanup)', freq:'Daily',                         type:'shared'},
-    {id:'a7', text:'Vacuum main floor',                          freq:'Daily',                         type:'unique'},
-    {id:'a8', text:'Exercise / practice / game / match',         freq:'Daily',                     type:'shared'},
-    {id:'a9', text:'Youth group',                                freq:'Weekly',                        type:'shared', nn:true},
-    {id:'a10',text:'Community volunteer hours (30 hrs min)',      freq:'Yearly',                        type:'shared', nn:true},
-    {id:'a11',text:'Prepare backpack & water bottle',            freq:'Sun–Thu evenings (school year)', type:'school', days:[0,1,2,3,4]},
-    {id:'a12',text:'Own laundry (wash, dry, put away)',          freq:'Wed & Sat',                     type:'shared', days:[3,6]},
-    {id:'a13',text:'Sheets & towels',                            freq:'Every Saturday',                type:'shared', days:[6]},
-    {id:'a14',text:'Full bedroom clean',                         freq:'Every other Sat or Sun',        type:'shared'},
-    {id:'a15',text:'Full bathroom clean (with Bryson)',          freq:'Every other Sat morning',       type:'shared'},
-    {id:'a16',text:'Grocery run',                                freq:'2x/week',                       type:'unique'},
-  ],
-  b:[
-    {id:'b1', text:'Make bed',                                   freq:'Daily',                         type:'shared'},
-    {id:'b2', text:'Personal hygiene routine',                   freq:'Daily',                         type:'shared'},
-    {id:'b3', text:'Prayers & devotionals',                      freq:'Daily',                         type:'shared'},
-    {id:'b4', text:'Complete schoolwork',                        freq:'Daily (school year)',            type:'school'},
-    {id:'b5', text:'Walk Bo',                                    freq:'Daily',                         type:'shared'},
-    {id:'b6', text:'Help with family meals (cooking + cleanup)', freq:'Daily',                         type:'shared'},
-    {id:'b7', text:'Exercise / practice / game / match',         freq:'Daily',                     type:'shared'},
-    {id:'b8', text:'Youth group',                                freq:'Weekly',                        type:'shared', nn:true},
-    {id:'b9', text:'Community volunteer hours (30 hrs min)',      freq:'Yearly',                        type:'shared', nn:true},
-    {id:'b10',text:'Prepare backpack & water bottle',            freq:'Sun–Thu evenings (school year)', type:'school', days:[0,1,2,3,4]},
-    {id:'b11',text:'Own laundry (wash, dry, put away)',          freq:'Wed & Sat',                     type:'shared', days:[3,6]},
-    {id:'b12',text:'Sheets & towels',                            freq:'Every Saturday',                type:'shared', days:[6]},
-    {id:'b13',text:'Full bedroom clean',                         freq:'Every other Sat or Sun',        type:'shared'},
-    {id:'b14',text:'Full bathroom clean (with Addison)',         freq:'Every other Sat morning',       type:'shared'},
-    {id:'b15',text:'Gather all household trash + put cans out',  freq:'Sun night & Wed night',         type:'unique', days:[0,3]},
-    {id:'b16',text:'Bring trash cans in from street',            freq:'Mon morning & Thu morning',     type:'unique', days:[1,4]},
-  ]
-};
+// One flat, editable chore list. Each chore is explicitly categorized.
+//   person : 'a' (Addison) | 'b' (Bryson) | 'both'
+//   cat    : 'daily' | 'scheduled' | 'weekly' | 'biweekly' | 'nonneg'
+//   days   : [0..6] (0=Sun..6=Sat) — required for 'scheduled', optional for 'biweekly'
+//   parity : 0|1 — biweekly only; which alternating week is active (see weekIndex())
+//   school : true — optional; shows the "school year" badge
+//   freq   : human-readable recurrence label (auto-derived in edit mode, editable)
+// This array SEEDS Firestore homebase/chores on first load; after that the live list
+// comes from Firestore (state.chores) and is editable from the Master List tab.
+const CHORES_SEED = [
+  {id:'c1', text:'Make bed',                                   person:'both', cat:'daily', freq:'Daily'},
+  {id:'c2', text:'Personal hygiene routine',                   person:'both', cat:'daily', freq:'Daily'},
+  {id:'c3', text:'Prayers & devotionals',                      person:'both', cat:'daily', freq:'Daily'},
+  {id:'c4', text:'Complete schoolwork',                        person:'both', cat:'daily', school:true, freq:'Daily (school year)'},
+  {id:'c5', text:'Walk Bo',                                    person:'both', cat:'daily', freq:'Daily'},
+  {id:'c6', text:'Help with family meals (cooking + cleanup)', person:'both', cat:'daily', freq:'Daily'},
+  {id:'c7', text:'Vacuum main floor',                          person:'a',    cat:'daily', freq:'Daily'},
+  {id:'c8', text:'Exercise / practice / game / match',         person:'both', cat:'daily', freq:'Daily'},
+  {id:'c9', text:'Prepare backpack & water bottle',            person:'both', cat:'scheduled', days:[0,1,2,3,4], school:true, freq:'Sun–Thu evenings (school year)'},
+  {id:'c10',text:'Own laundry (wash, dry, put away)',          person:'both', cat:'scheduled', days:[3,6], freq:'Wed & Sat'},
+  {id:'c11',text:'Sheets & towels',                            person:'both', cat:'scheduled', days:[6], freq:'Every Saturday'},
+  {id:'c12',text:'Gather all household trash + put cans out',  person:'b',    cat:'scheduled', days:[0,3], freq:'Sun night & Wed night'},
+  {id:'c13',text:'Bring trash cans in from street',            person:'b',    cat:'scheduled', days:[1,4], freq:'Mon morning & Thu morning'},
+  {id:'c14',text:'Full bedroom clean',                         person:'both', cat:'biweekly', parity:0, freq:'Every other Sat or Sun'},
+  {id:'c15',text:'Full bathroom clean',                        person:'both', cat:'biweekly', parity:0, days:[6], freq:'Every other Sat morning'},
+  {id:'c16',text:'Grocery run',                                person:'a',    cat:'weekly', freq:'2x/week'},
+  {id:'c17',text:'Youth group',                                person:'both', cat:'nonneg', freq:'Weekly'},
+  {id:'c18',text:'Community volunteer hours (30 hrs min)',     person:'both', cat:'nonneg', freq:'Yearly'},
+];
 
 const EXTRAS_SHARED = [
   {id:'xs1',text:'Vacuum basement, upstairs & stairs',                   amt:15, cat:'house'},
@@ -351,19 +347,36 @@ function getWeekStartStr(){
   return localDateStr(monday);
 }
 
-// Chore classification:
-//   daily      — every day (freq starts "Daily")
-//   scheduled  — pinned to specific weekdays via days:[…] (0=Sun..6=Sat); shows in Today's list on those days
-//   nonNeg     — must-do reminders (nn:true): no allowance, excluded from payout
-//   weekly     — everything else: persists until the Monday reset
-function isDaily(c){ return c.freq.startsWith('Daily'); }
-function isScheduled(c){ return Array.isArray(c.days) && c.days.length>0; }
-function isNonNeg(c){ return !!c.nn; }
-function occursOn(c, dayIdx){ return isDaily(c) ? true : (isScheduled(c) ? c.days.includes(dayIdx) : false); }
-// Per-day chores are tracked per calendar date (reset daily): every-day chores + day-pinned chores.
-function perDayChores(t){ return CHORES[t].filter(c=>!isNonNeg(c) && (isDaily(c)||isScheduled(c))); }
-function weeklyChores(t){ return CHORES[t].filter(c=>!isNonNeg(c) && !isDaily(c) && !isScheduled(c)); }
-function nonNegChores(t){ return CHORES[t].filter(isNonNeg); }
+// The live chore list (Firestore-backed), falling back to the seed before first load.
+function allChores(){ return (state.chores && state.chores.length) ? state.chores : CHORES_SEED; }
+function getChores(t){ return allChores().filter(c=>c.person===t || c.person==='both'); }
+
+// Classification by explicit `cat`:
+//   daily      — every day
+//   scheduled  — pinned to specific weekdays via days:[…] (0=Sun..6=Sat)
+//   weekly     — anytime that week (persists until the Monday reset)
+//   biweekly   — every other week (auto-alternating by parity); may also be day-pinned
+//   nonneg     — must-do reminders: no allowance, excluded from payout
+function hasDays(c){ return Array.isArray(c.days) && c.days.length>0; }
+function occursOn(c, dayIdx){ return c.cat==='daily' ? true : (hasDays(c) ? c.days.includes(dayIdx) : false); }
+function isPerDay(c){ return c.cat==='daily' || ((c.cat==='scheduled'||c.cat==='biweekly') && hasDays(c)); }
+function isWeeklyStyle(c){ return c.cat==='weekly' || (c.cat==='biweekly' && !hasDays(c)); }
+
+// Biweekly parity: whole weeks since an anchor Monday; active when (weekIndex % 2) matches parity.
+function weekIndex(ws){ const E=Date.parse('2026-01-05T00:00:00'); return Math.round((Date.parse(ws+'T00:00:00')-E)/(7*864e5)); }
+function activeThisWeek(c, ws){ return c.cat!=='biweekly' ? true : ((((weekIndex(ws)%2)+2)%2)===(c.parity||0)); }
+
+// Week-aware buckets for a kid (off-week biweeklies and non-negotiables excluded from the first two).
+function perDayChores(t, ws){ return getChores(t).filter(c=>c.cat!=='nonneg' && isPerDay(c) && activeThisWeek(c, ws)); }
+function weeklyChores(t, ws){ return getChores(t).filter(c=>isWeeklyStyle(c) && activeThisWeek(c, ws)); }
+function nonNegChores(t){ return getChores(t).filter(c=>c.cat==='nonneg'); }
+
+// Person-aware badge for the kid views.
+function choreBadge(c, t){
+  if(c.school) return `<span class="badge b-school">school year</span>`;
+  if(c.person==='both') return `<span class="badge b-shared">shared</span>`;
+  return `<span class="badge ${t==='a'?'b-a':'b-b'}">${t==='a'?'Addison only':'Bryson only'}</span>`;
+}
 
 // The 7 local date strings (Mon..Sun) for a given week-start date string.
 function weekDates(weekStartStr){
@@ -387,12 +400,15 @@ let state = {
   a: freshKidState('a'),
   b: freshKidState('b'),
   projects: { a:{}, b:{} },   // persistent one-time project claims — stored in meta doc, NOT reset weekly
+  chores: [],                 // live editable chore list — stored in homebase/chores, seeded from CHORES_SEED
+  editMode: false,            // Master tab edit toggle (UI only, not persisted)
+  editForm: null,             // in-progress add/edit chore form (UI only)
   alertDismissed: false,
   lastSync: null
 };
 
 let currentView = 'a';
-let unsubA = null, unsubB = null, unsubMeta = null;
+let unsubA = null, unsubB = null, unsubMeta = null, unsubChores = null;
 
 // ─── FIREBASE SYNC ────────────────────────────────────────────────────────────
 
@@ -408,6 +424,16 @@ function getWeekDoc(t){
 }
 function getMetaDoc(){
   return window._doc(window._db, 'homebase', 'meta');
+}
+function getChoresDoc(){
+  return window._doc(window._db, 'homebase', 'chores');
+}
+
+async function pushChores(){
+  try {
+    await window._setDoc(getChoresDoc(), { list: state.chores, updatedAt: window._serverTimestamp() });
+    setSyncStatus('live');
+  } catch(e){ console.error('Chores write error', e); setSyncStatus('err'); }
 }
 
 async function pushState(t){
@@ -486,14 +512,27 @@ function subscribeToFirestore(){
     else if(currentView==='m') renderMaster();
     else renderKid(currentView);
   });
+
+  // Subscribe to the editable chore list — seed from CHORES_SEED on first run.
+  unsubChores = window._onSnapshot(getChoresDoc(), snap => {
+    if(snap.exists() && Array.isArray(snap.data().list) && snap.data().list.length){
+      state.chores = snap.data().list;
+    } else {
+      state.chores = CHORES_SEED.map(c=>({...c}));
+      pushChores();
+    }
+    if(currentView==='p') renderParent();
+    else if(currentView==='m') renderMaster();
+    else renderKid(currentView);
+  }, err => { console.error(err); setSyncStatus('err'); });
 }
 
 // ─── COMPUTED ─────────────────────────────────────────────────────────────────
 
 function getStats(t){
   const s = state[t];
-  const weekly = weeklyChores(t);
-  const perDay = perDayChores(t);
+  const weekly = weeklyChores(t, s.weekStart);
+  const perDay = perDayChores(t, s.weekStart);
   const nonNeg = nonNegChores(t);
   const dates  = weekDates(s.weekStart);
   const today  = localDateStr();
@@ -554,8 +593,6 @@ function renderKid(t){
   const chkC = isA?'chk-a':'chk-b';
   const amtC = isA?'ea-a':'ea-b';
   const selC = isA?'sel-a':'sel-b';
-  const uniqBadge = isA?'b-a':'b-b';
-  const uniqLabel = isA?'Addison only':'Bryson only';
 
   const allowVal = s.allowance||KIDS[t].allowance;
 
@@ -593,20 +630,16 @@ function renderKid(t){
   const today = localDateStr();
   const todayIdx = new Date().getDay();
   const todayMap = (s.daily && s.daily[today]) || {};
-  const todayChores = perDayChores(t).filter(c=>occursOn(c, todayIdx));
+  const todayChores = perDayChores(t, s.weekStart).filter(c=>occursOn(c, todayIdx));
   h += `<div class="section"><div class="sec-head"><span>Today's chores · ${todayLabel}</span><span>${stats.todayDone}/${stats.todayTotal}</span></div>`;
   if(todayChores.length===0){
     h+=`<div class="chore-row" style="cursor:default;"><span class="c-name" style="color:var(--text3);font-style:italic;">No chores scheduled for today.</span></div>`;
   }
   todayChores.forEach(c=>{
     const done=!!todayMap[c.id];
-    let badge='';
-    if(c.type==='shared') badge=`<span class="badge b-shared">shared</span>`;
-    else if(c.type==='unique') badge=`<span class="badge ${uniqBadge}">${uniqLabel}</span>`;
-    else if(c.type==='school') badge=`<span class="badge b-school">school year</span>`;
     h+=`<div class="chore-row${done?' done':''}" onclick="toggleDaily('${t}','${c.id}')">
       <div class="c-check ${done?chkC:''}">${done?chkSVG():''}</div>
-      <span class="c-name">${c.text}${badge}</span>
+      <span class="c-name">${c.text}${choreBadge(c,t)}</span>
       <span class="c-freq">${c.freq}</span>
     </div>`;
   });
@@ -629,15 +662,11 @@ function renderKid(t){
 
   // Weekly chores — persist (stay checked) until the Monday reset
   h += `<div class="section"><div class="sec-head"><span>Weekly chores</span><span>${stats.weeklyDone}/${stats.weeklyTotal}</span></div>`;
-  weeklyChores(t).forEach(c=>{
+  weeklyChores(t, s.weekStart).forEach(c=>{
     const done=!!s.done[c.id];
-    let badge='';
-    if(c.type==='shared') badge=`<span class="badge b-shared">shared</span>`;
-    else if(c.type==='unique') badge=`<span class="badge ${uniqBadge}">${uniqLabel}</span>`;
-    else if(c.type==='school') badge=`<span class="badge b-school">school year</span>`;
     h+=`<div class="chore-row${done?' done':''}" onclick="toggleChore('${t}','${c.id}')">
       <div class="c-check ${done?chkC:''}">${done?chkSVG():''}</div>
-      <span class="c-name">${c.text}${badge}</span>
+      <span class="c-name">${c.text}${choreBadge(c,t)}</span>
       <span class="c-freq">${c.freq}</span>
     </div>`;
   });
@@ -708,7 +737,7 @@ function renderKid(t){
 // 7-day grid (Mon..Sun) of a kid's daily chores. Today's column is highlighted.
 function dailyGridHTML(t){
   const s=state[t], kid=KIDS[t];
-  const perDay=perDayChores(t);
+  const perDay=perDayChores(t, s.weekStart);
   const dates=weekDates(s.weekStart);
   const idxs=dates.map(d=>new Date(d+'T00:00:00').getDay());
   const today=localDateStr();
@@ -820,7 +849,7 @@ function renderParent(){
   ['a','b'].forEach(t=>{
     const s=state[t];
     const kid=KIDS[t];
-    const outstanding=weeklyChores(t).filter(c=>!s.done[c.id]);
+    const outstanding=weeklyChores(t, s.weekStart).filter(c=>!s.done[c.id]);
     h+=`<div class="p-summary"><h3>${kid.name}'s outstanding weekly chores</h3>`;
     if(outstanding.length===0){
       h+=`<div class="no-extras">All weekly chores done! &#127881;</div>`;
@@ -854,51 +883,123 @@ function renderParent(){
 }
 
 // ─── RENDER MASTER LIST ───────────────────────────────────────────────────────
-// Read-only reference: every chore, tagged by person + recurrence. Sourced from
-// CHORES so it can never drift from what the kids actually see.
+// The running chore list, grouped by category and tagged by person. Reads from the
+// live (Firestore-backed) list and is editable in place via Edit mode.
 
-function bucketOf(c){
-  if(isNonNeg(c))    return 'nonneg';
-  if(isDaily(c))     return 'daily';
-  if(isScheduled(c)) return 'sched';
-  return 'weekly';
+const MASTER_GROUPS = [
+  {key:'daily',     label:'Daily — every day'},
+  {key:'scheduled', label:'Scheduled — specific days'},
+  {key:'biweekly',  label:'Biweekly — every other week'},
+  {key:'weekly',    label:'Weekly — anytime that week'},
+  {key:'nonneg',    label:'Non-negotiables — must do, no allowance'},
+];
+const DAY_LABELS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+function whoBadge(person){
+  return person==='a' ? `<span class="badge b-a">Addison</span>`
+       : person==='b' ? `<span class="badge b-b">Bryson</span>`
+       :                `<span class="badge b-shared">Both</span>`;
+}
+
+// Readable recurrence label — uses the stored freq, else derives from cat + days.
+function choreFreqLabel(c){
+  if(c.freq) return c.freq;
+  const days = hasDays(c) ? c.days.map(d=>DAY_LABELS[d]).join(' & ') : '';
+  if(c.cat==='daily')     return 'Daily';
+  if(c.cat==='weekly')    return 'Weekly';
+  if(c.cat==='nonneg')    return 'Must do';
+  if(c.cat==='scheduled') return days || 'Scheduled';
+  if(c.cat==='biweekly')  return 'Every other wk' + (days ? ' · '+days : '');
+  return '';
 }
 
 function renderMaster(){
-  // Distinct set: all of Addison's chores (shared→Both, unique→Addison) + Bryson's unique chores.
-  const rows=[];
-  CHORES.a.forEach(c=> rows.push({...c, who:(c.type==='unique'?'Addison':'Both')}));
-  CHORES.b.forEach(c=>{ if(c.type==='unique') rows.push({...c, who:'Bryson'}); });
-
-  const whoBadge=who=>
-    who==='Addison' ? `<span class="badge b-a">Addison</span>` :
-    who==='Bryson'  ? `<span class="badge b-b">Bryson</span>`  :
-                      `<span class="badge b-shared">Both</span>`;
-
-  const groups=[
-    {key:'daily',  label:'Daily — every day'},
-    {key:'sched',  label:'Scheduled — specific days'},
-    {key:'weekly', label:'Weekly — anytime that week'},
-    {key:'nonneg', label:'Non-negotiables — must do, no allowance'},
-  ];
+  const all = allChores();
+  const ws  = getWeekStartStr();
+  const edit = state.editMode;
 
   let h=`<div class="main">`;
-  h+=`<div style="font-size:13px;color:var(--text3);margin-bottom:1rem;">Master list of every chore — tagged by person and recurrence. Reference only; edit chores in the code.</div>`;
-  groups.forEach(g=>{
-    const items=rows.filter(r=>bucketOf(r)===g.key);
+  h+=`<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:1rem;">
+    <div style="font-size:13px;color:var(--text3);">Every chore, tagged by person and recurrence.${edit?' <strong style="color:var(--purple-dark);">Editing — changes sync to all devices.</strong>':''}</div>
+    <button class="btn${edit?' btn-notif':''}" style="flex-shrink:0;" onclick="toggleEditMode()">${edit?'Done':'&#9998; Edit'}</button>
+  </div>`;
+
+  if(edit){
+    h+=`<div class="btn-row" style="margin-bottom:1rem;"><button class="btn btn-notif" onclick="startAddChore()">&#43; Add chore</button></div>`;
+    if(state.editForm) h+=choreFormHTML();
+  }
+
+  let count=0;
+  MASTER_GROUPS.forEach(g=>{
+    const items=all.filter(c=>c.cat===g.key);
     if(!items.length) return;
     h+=`<div class="section"><div class="sec-head"><span>${g.label}</span><span>${items.length}</span></div>`;
     items.forEach(c=>{
+      count++;
+      const note = c.cat==='biweekly'
+        ? ` <span style="color:var(--text3);font-size:11px;">(${activeThisWeek(c,ws)?'active this wk':'off this wk'})</span>` : '';
+      const school = c.school ? ` <span class="badge b-school">school</span>` : '';
+      const right = edit
+        ? `<span style="display:flex;gap:6px;flex-shrink:0;">
+             <button class="btn" style="padding:4px 10px;font-size:12px;" onclick="startEditChore('${c.id}')">Edit</button>
+             <button class="btn btn-danger" style="padding:4px 10px;font-size:12px;" onclick="deleteChore('${c.id}')">Delete</button>
+           </span>`
+        : `<span class="c-freq">${choreFreqLabel(c)}</span>`;
       h+=`<div class="chore-row" style="cursor:default;">
-        <span class="c-name">${c.text} ${whoBadge(c.who)}</span>
-        <span class="c-freq">${c.freq}</span>
+        <span class="c-name">${c.text} ${whoBadge(c.person)}${school}${note}</span>
+        ${right}
       </div>`;
     });
     h+=`</div>`;
   });
-  h+=`<div style="font-size:12px;color:var(--text3);margin-top:.5rem;">${rows.length} chores total across both kids.</div>`;
+  h+=`<div style="font-size:12px;color:var(--text3);margin-top:.5rem;">${count} chores total.</div>`;
   h+=`</div>`;
   document.getElementById('view-m').innerHTML=h;
+}
+
+// Inline add/edit form. Values are read from the DOM on save (so typing never re-renders).
+function choreFormHTML(){
+  const f=state.editForm;
+  const ws=getWeekStartStr();
+  const sel=(v,want)=>String(v)===String(want)?'selected':'';
+  const showDays=(f.cat==='scheduled'||f.cat==='biweekly');
+  const showPar=(f.cat==='biweekly');
+  const dayBoxes=DAY_LABELS.map((lab,i)=>
+    `<label style="display:inline-flex;align-items:center;gap:3px;font-size:12px;margin:0 10px 6px 0;"><input type="checkbox" class="cf-day" value="${i}" ${f.days&&f.days.includes(i)?'checked':''}> ${lab}</label>`).join('');
+  const thisWeekParity = (((weekIndex(ws)%2)+2)%2)===0 ? 'A' : 'B';
+  return `<div class="p-summary" style="border:1px solid var(--purple-border);">
+    <h3 class="purple">${f.id?'Edit chore':'Add chore'}</h3>
+    <div style="display:flex;flex-direction:column;gap:12px;">
+      <label class="cf-lbl">Chore name<br><input id="cf-text" type="text" value="${(f.text||'').replace(/"/g,'&quot;')}" placeholder="e.g. Take out recycling" class="cf-in"></label>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;">
+        <label class="cf-lbl" style="flex:1;min-width:130px;">Person<br><select id="cf-person" class="cf-in">
+          <option value="both" ${sel(f.person,'both')}>Both</option>
+          <option value="a" ${sel(f.person,'a')}>Addison</option>
+          <option value="b" ${sel(f.person,'b')}>Bryson</option>
+        </select></label>
+        <label class="cf-lbl" style="flex:1;min-width:130px;">Category<br><select id="cf-cat" class="cf-in" onchange="onCatChange()">
+          <option value="daily" ${sel(f.cat,'daily')}>Daily — every day</option>
+          <option value="scheduled" ${sel(f.cat,'scheduled')}>Scheduled — specific days</option>
+          <option value="weekly" ${sel(f.cat,'weekly')}>Weekly — anytime</option>
+          <option value="biweekly" ${sel(f.cat,'biweekly')}>Biweekly — every other wk</option>
+          <option value="nonneg" ${sel(f.cat,'nonneg')}>Non-negotiable — no $</option>
+        </select></label>
+      </div>
+      <div id="cf-days-row" class="cf-lbl" style="display:${showDays?'block':'none'};">Days<br>${dayBoxes}</div>
+      <div id="cf-parity-row" class="cf-lbl" style="display:${showPar?'block':'none'};">Which week<br>
+        <select id="cf-parity" class="cf-in" style="max-width:140px;display:inline-block;">
+          <option value="0" ${sel(f.parity??0,0)}>Week A</option>
+          <option value="1" ${sel(f.parity??0,1)}>Week B</option>
+        </select>
+        <span style="color:var(--text3);font-size:12px;"> — this week (${weekRangeStr(ws)}) is Week ${thisWeekParity}. Flip if it lands wrong.</span>
+      </div>
+      <label class="cf-lbl" style="display:flex;align-items:center;gap:6px;"><input id="cf-school" type="checkbox" ${f.school?'checked':''}> School-year only</label>
+      <div class="btn-row">
+        <button class="btn btn-notif" onclick="saveChore()">Save</button>
+        <button class="btn" onclick="cancelChore()">Cancel</button>
+      </div>
+    </div>
+  </div>`;
 }
 
 // ─── ACTIONS ──────────────────────────────────────────────────────────────────
@@ -964,6 +1065,69 @@ function dismissAlert(){
   state.alertDismissed=true;
   pushMeta();
   document.getElementById('alert-bar').classList.add('hidden');
+}
+
+// ─── CHORE EDITING (Master tab) ───────────────────────────────────────────────
+
+function newChoreId(){ return 'c' + Date.now().toString(36) + Math.floor(Math.random()*46656).toString(36); }
+
+function toggleEditMode(){ state.editMode=!state.editMode; if(!state.editMode) state.editForm=null; renderMaster(); }
+
+function startAddChore(){
+  state.editForm={ id:null, text:'', person:'both', cat:'daily', days:[], parity:0, school:false };
+  renderMaster();
+}
+
+function startEditChore(id){
+  const c=allChores().find(x=>x.id===id); if(!c) return;
+  state.editForm={ id:c.id, text:c.text, person:c.person, cat:c.cat, days:(c.days||[]).slice(), parity:c.parity||0, school:!!c.school };
+  renderMaster();
+}
+
+function cancelChore(){ state.editForm=null; renderMaster(); }
+
+// Toggle the Days / Which-week rows without re-rendering (preserves form input focus).
+function onCatChange(){
+  const cat=document.getElementById('cf-cat').value;
+  document.getElementById('cf-days-row').style.display=(cat==='scheduled'||cat==='biweekly')?'block':'none';
+  document.getElementById('cf-parity-row').style.display=(cat==='biweekly')?'block':'none';
+}
+
+function saveChore(){
+  const text=document.getElementById('cf-text').value.trim();
+  if(!text){ alert('Give the chore a name.'); return; }
+  const person=document.getElementById('cf-person').value;
+  const cat=document.getElementById('cf-cat').value;
+  const school=document.getElementById('cf-school').checked;
+  let days=[...document.querySelectorAll('.cf-day:checked')].map(e=>parseInt(e.value)).sort((a,b)=>a-b);
+  const parity=parseInt(document.getElementById('cf-parity').value)||0;
+  if(cat!=='scheduled' && cat!=='biweekly') days=[];
+  if(cat==='scheduled' && !days.length){ alert('Pick at least one day for a scheduled chore.'); return; }
+
+  const rec={ id: state.editForm.id || newChoreId(), text, person, cat };
+  if(school) rec.school=true;
+  if(days.length) rec.days=days;
+  if(cat==='biweekly') rec.parity=parity;
+  rec.freq=choreFreqLabel(rec);   // store a readable label (derived from cat + days)
+
+  // Make sure we're editing a real array (not the seed fallback) before mutating.
+  if(!Array.isArray(state.chores) || !state.chores.length) state.chores=allChores().map(c=>({...c}));
+  const i=state.chores.findIndex(c=>c.id===rec.id);
+  if(i>=0) state.chores[i]=rec; else state.chores.push(rec);
+
+  state.editForm=null;
+  pushChores();
+  renderMaster();
+}
+
+function deleteChore(id){
+  const c=allChores().find(x=>x.id===id);
+  if(!confirm(`Delete "${c?c.text:'this chore'}"? This removes it for both kids.`)) return;
+  if(!Array.isArray(state.chores) || !state.chores.length) state.chores=allChores().map(c=>({...c}));
+  state.chores=state.chores.filter(c=>c.id!==id);
+  if(state.editForm && state.editForm.id===id) state.editForm=null;
+  pushChores();
+  renderMaster();
 }
 
 // ─── ALERTS ───────────────────────────────────────────────────────────────────
