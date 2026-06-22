@@ -32,6 +32,7 @@
   // /homebase/meta          → alert dismissed flag + persistent one-time project claims
   // /homebase/chores        → editable chore list (seeded from CHORES_SEED; edited via Master tab)
   // /homebase/extras        → editable extra-earnings list (seeded from EXTRAS_SEED; edited via Master tab)
+  // /homebase/projects      → editable special-project DEFINITIONS (claims live in meta.projects)
 
   window._db = db;
   window._doc = doc;
@@ -324,8 +325,10 @@ const EXTRAS_SEED = [
   {id:'xb5', text:'Shovel driveway/walkways',                             amt:15, cat:'house',    person:'b'},
   {id:'xb6', text:'Wash windows outside',                                 amt:10, cat:'house',    person:'b'},
 ];
-const PROJECTS = [
-  {id:'xp1',text:'Move firewood to other side of yard',                  amt:20},
+// One-time special projects (bonus $; claims persist in meta, survive the weekly reset).
+// Editable from the Master tab; seeds homebase/projects.   person:'a'|'b'|'both'   amt: dollars
+const PROJECTS_SEED = [
+  {id:'xp1', text:'Move firewood to other side of yard', amt:20, person:'both'},
 ];
 
 const GRADE_TIERS = [
@@ -338,6 +341,10 @@ const GRADE_TIERS = [
 // Live editable extras list (Firestore-backed), falling back to the seed before first load.
 function allExtras(){ return (state.extras && state.extras.length) ? state.extras : EXTRAS_SEED; }
 function getExtras(t){ return allExtras().filter(e=>e.person===t || e.person==='both'); }
+
+// Live editable special-projects list (definitions live in homebase/projects; CLAIMS live in meta).
+function allProjects(){ return (state.projectDefs && state.projectDefs.length) ? state.projectDefs : PROJECTS_SEED; }
+function getProjects(t){ return allProjects().filter(p=>p.person===t || p.person==='both'); }
 
 // ─── STATE ────────────────────────────────────────────────────────────────────
 
@@ -424,6 +431,7 @@ let state = {
   projects: { a:{}, b:{} },   // persistent one-time project claims — stored in meta doc, NOT reset weekly
   chores: [],                 // live editable chore list — stored in homebase/chores, seeded from CHORES_SEED
   extras: [],                 // live editable extra-earnings list — stored in homebase/extras, seeded from EXTRAS_SEED
+  projectDefs: [],            // live editable special-project DEFINITIONS — stored in homebase/projects (claims are in state.projects)
   editMode: false,            // Master tab edit toggle (UI only, not persisted)
   editForm: null,             // in-progress add/edit chore form (UI only)
   schoolYear: true,           // global toggle — when false, school:true chores are hidden from daily lists (stored in meta)
@@ -432,7 +440,7 @@ let state = {
 };
 
 let currentView = 'a';
-let unsubA = null, unsubB = null, unsubMeta = null, unsubChores = null, unsubExtras = null;
+let unsubA = null, unsubB = null, unsubMeta = null, unsubChores = null, unsubExtras = null, unsubProjects = null;
 
 // ─── FIREBASE SYNC ────────────────────────────────────────────────────────────
 
@@ -455,6 +463,9 @@ function getChoresDoc(){
 function getExtrasDoc(){
   return window._doc(window._db, 'homebase', 'extras');
 }
+function getProjectsDoc(){
+  return window._doc(window._db, 'homebase', 'projects');
+}
 
 async function pushChores(){
   try {
@@ -468,6 +479,13 @@ async function pushExtras(){
     await window._setDoc(getExtrasDoc(), { list: state.extras, updatedAt: window._serverTimestamp() });
     setSyncStatus('live');
   } catch(e){ console.error('Extras write error', e); setSyncStatus('err'); }
+}
+
+async function pushProjectDefs(){
+  try {
+    await window._setDoc(getProjectsDoc(), { list: state.projectDefs, updatedAt: window._serverTimestamp() });
+    setSyncStatus('live');
+  } catch(e){ console.error('Projects write error', e); setSyncStatus('err'); }
 }
 
 async function pushState(t){
@@ -551,11 +569,11 @@ function subscribeToFirestore(){
 
   // Subscribe to the editable chore list — seed from CHORES_SEED on first run.
   unsubChores = window._onSnapshot(getChoresDoc(), snap => {
-    if(snap.exists() && Array.isArray(snap.data().list) && snap.data().list.length){
-      // Drop any entry with a malformed id (defends inline onclick handlers against tampered docs).
+    if(snap.exists() && Array.isArray(snap.data().list)){
+      // Doc exists → respect it (even if emptied). Drop malformed ids (defends inline onclick handlers).
       state.chores = snap.data().list.filter(c=>c && validChoreId(c.id));
     } else {
-      state.chores = CHORES_SEED.map(c=>({...c}));
+      state.chores = CHORES_SEED.map(c=>({...c}));   // seed only when the doc doesn't exist yet
       pushChores();
     }
     if(currentView==='p') renderParent();
@@ -565,11 +583,24 @@ function subscribeToFirestore(){
 
   // Subscribe to the editable extra-earnings list — seed from EXTRAS_SEED on first run.
   unsubExtras = window._onSnapshot(getExtrasDoc(), snap => {
-    if(snap.exists() && Array.isArray(snap.data().list) && snap.data().list.length){
+    if(snap.exists() && Array.isArray(snap.data().list)){
       state.extras = snap.data().list.filter(e=>e && validChoreId(e.id));
     } else {
       state.extras = EXTRAS_SEED.map(e=>({...e}));
       pushExtras();
+    }
+    if(currentView==='p') renderParent();
+    else if(currentView==='m') renderMaster();
+    else renderKid(currentView);
+  }, err => { console.error(err); setSyncStatus('err'); });
+
+  // Subscribe to the editable special-projects list — seed from PROJECTS_SEED on first run.
+  unsubProjects = window._onSnapshot(getProjectsDoc(), snap => {
+    if(snap.exists() && Array.isArray(snap.data().list)){
+      state.projectDefs = snap.data().list.filter(p=>p && validChoreId(p.id));
+    } else {
+      state.projectDefs = PROJECTS_SEED.map(p=>({...p}));
+      pushProjectDefs();
     }
     if(currentView==='p') renderParent();
     else if(currentView==='m') renderMaster();
@@ -620,7 +651,7 @@ function getStats(t){
   const projClaims = state.projects[t] || {};
   const claimedList = [
     ...getExtras(t).filter(e=>s.claimed[e.id]),
-    ...PROJECTS.filter(e=>projClaims[e.id])
+    ...getProjects(t).filter(e=>projClaims[e.id])
   ];
   const extrasEarned = claimedList.reduce((sum,e)=>sum+e.amt,0);
   const tier = GRADE_TIERS.find(g=>g.gpa===s.grade);
@@ -763,16 +794,19 @@ function renderKid(t){
   h+=`</div></div></div>`;
 
   // Special Projects
-  h+=`<div class="section"><div class="sec-head"><span>Special projects</span></div>`;
-  PROJECTS.forEach(e=>{
-    const done=!!(state.projects[t]||{})[e.id];
-    h+=`<div class="extra-row${done?' done':''}" onclick="toggleProject('${t}','${e.id}')">
-      <div class="c-check ${done?chkC:''}">${done?chkSVG():''}</div>
-      <span class="c-name">${e.text} <span class="badge b-onetime">one-time</span></span>
-      <span class="e-amt ${amtC}">+$${e.amt}</span>
-    </div>`;
-  });
-  h+=`</div>`;
+  const projItems = getProjects(t);
+  if(projItems.length){
+    h+=`<div class="section"><div class="sec-head"><span>Special projects</span></div>`;
+    projItems.forEach(e=>{
+      const done=!!(state.projects[t]||{})[e.id];
+      h+=`<div class="extra-row${done?' done':''}" onclick="toggleProject('${t}','${e.id}')">
+        <div class="c-check ${done?chkC:''}">${done?chkSVG():''}</div>
+        <span class="c-name">${esc(e.text)} <span class="badge b-onetime">one-time</span></span>
+        <span class="e-amt ${amtC}">+$${Number(e.amt)||0}</span>
+      </div>`;
+    });
+    h+=`</div>`;
+  }
 
   if(state.lastSync){
     h+=`<div class="last-sync">Last synced ${state.lastSync.toLocaleTimeString()}</div>`;
@@ -1051,8 +1085,57 @@ function renderMaster(){
   });
   h+=`<div style="font-size:12px;color:var(--text3);margin-top:.5rem;">${ecount} extra-earning items.</div>`;
 
+  // ── Special projects (editable one-time bonus $) ──
+  h+=`<div class="divider"></div>`;
+  if(edit){
+    h+=`<div class="btn-row" style="margin-bottom:1rem;"><button class="btn btn-notif" onclick="startAddProject()">&#43; Add special project</button></div>`;
+    if(state.editForm && state.editForm.kind==='project') h+=projectFormHTML();
+  }
+  const projects=allProjects();
+  h+=`<div class="section"><div class="sec-head"><span>Special projects — one-time</span><span>${projects.length}</span></div>`;
+  if(!projects.length){
+    h+=`<div class="no-extras">No special projects.</div>`;
+  }
+  projects.forEach(p=>{
+    const right = edit
+      ? `<span style="display:flex;gap:6px;flex-shrink:0;">
+           <button class="btn" style="padding:4px 10px;font-size:12px;" onclick="startEditProject('${p.id}')">Edit</button>
+           <button class="btn btn-danger" style="padding:4px 10px;font-size:12px;" onclick="deleteProject('${p.id}')">Delete</button>
+         </span>`
+      : `<span class="ext-amt">+$${Number(p.amt)||0}</span>`;
+    h+=`<div class="chore-row" style="cursor:default;">
+      <span class="c-name">${esc(p.text)} ${whoBadge(p.person)} <span class="badge b-onetime">one-time</span></span>
+      ${right}
+    </div>`;
+  });
+  h+=`</div>`;
+
   h+=`</div>`;
   document.getElementById('view-m').innerHTML=h;
+}
+
+// Inline add/edit form for a special project.
+function projectFormHTML(){
+  const f=state.editForm;
+  const sel=(v,want)=>String(v)===String(want)?'selected':'';
+  return `<div class="p-summary" style="border:1px solid var(--purple-border);">
+    <h3 class="purple">${f.id?'Edit special project':'Add special project'}</h3>
+    <div style="display:flex;flex-direction:column;gap:12px;">
+      <label class="cf-lbl">Description<br><input id="pf-text" type="text" value="${esc(f.text)}" placeholder="e.g. Move firewood to other side of yard" class="cf-in"></label>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;">
+        <label class="cf-lbl" style="flex:1;min-width:120px;">Person<br><select id="pf-person" class="cf-in">
+          <option value="both" ${sel(f.person,'both')}>Both</option>
+          <option value="a" ${sel(f.person,'a')}>Addison</option>
+          <option value="b" ${sel(f.person,'b')}>Bryson</option>
+        </select></label>
+        <label class="cf-lbl" style="flex:1;min-width:90px;">Amount $<br><input id="pf-amt" type="number" min="0" step="1" value="${Number(f.amt)||0}" class="cf-in"></label>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-notif" onclick="saveProject()">Save</button>
+        <button class="btn" onclick="cancelChore()">Cancel</button>
+      </div>
+    </div>
+  </div>`;
 }
 
 // Inline add/edit form for an extra-earnings item.
@@ -1299,6 +1382,47 @@ function deleteExtra(id){
   state.extras=state.extras.filter(e=>e.id!==id);
   if(state.editForm && state.editForm.id===id) state.editForm=null;
   pushExtras();
+  renderMaster();
+}
+
+// ── Special-project editing (Master tab). Note: state.projectDefs = definitions; state.projects = claims. ──
+function newProjectId(){ return 'p' + Date.now().toString(36) + Math.floor(Math.random()*46656).toString(36); }
+
+function startAddProject(){
+  state.editForm={ kind:'project', id:null, text:'', person:'both', amt:20 };
+  renderMaster();
+}
+
+function startEditProject(id){
+  const p=allProjects().find(x=>x.id===id); if(!p) return;
+  state.editForm={ kind:'project', id:p.id, text:p.text, person:p.person, amt:p.amt };
+  renderMaster();
+}
+
+function saveProject(){
+  const text=document.getElementById('pf-text').value.trim();
+  if(!text){ alert('Give the project a description.'); return; }
+  const person=document.getElementById('pf-person').value;
+  const amt=Math.max(0, parseInt(document.getElementById('pf-amt').value)||0);
+
+  const rec={ id: state.editForm.id || newProjectId(), text, person, amt };
+  if(!validChoreId(rec.id)){ alert('Invalid id — not saved.'); return; }
+  if(!Array.isArray(state.projectDefs) || !state.projectDefs.length) state.projectDefs=allProjects().map(p=>({...p}));
+  const i=state.projectDefs.findIndex(p=>p.id===rec.id);
+  if(i>=0) state.projectDefs[i]=rec; else state.projectDefs.push(rec);
+
+  state.editForm=null;
+  pushProjectDefs();
+  renderMaster();
+}
+
+function deleteProject(id){
+  const p=allProjects().find(x=>x.id===id);
+  if(!confirm(`Delete "${p?p.text:'this project'}"? This removes it for both kids.`)) return;
+  if(!Array.isArray(state.projectDefs) || !state.projectDefs.length) state.projectDefs=allProjects().map(p=>({...p}));
+  state.projectDefs=state.projectDefs.filter(p=>p.id!==id);
+  if(state.editForm && state.editForm.id===id) state.editForm=null;
+  pushProjectDefs();
   renderMaster();
 }
 
