@@ -378,9 +378,12 @@ function isWeeklyStyle(c){ return c.cat==='weekly' || (c.cat==='biweekly' && !ha
 function weekIndex(ws){ const E=Date.parse('2026-01-05T00:00:00'); return Math.round((Date.parse(ws+'T00:00:00')-E)/(7*864e5)); }
 function activeThisWeek(c, ws){ return c.cat!=='biweekly' ? true : ((((weekIndex(ws)%2)+2)%2)===(c.parity||0)); }
 
+// School-year gate: school:true chores only count/show when the global toggle is on.
+function schoolOk(c){ return !c.school || state.schoolYear; }
+
 // Week-aware buckets for a kid (off-week biweeklies and non-negotiables excluded from the first two).
-function perDayChores(t, ws){ return getChores(t).filter(c=>c.cat!=='nonneg' && isPerDay(c) && activeThisWeek(c, ws)); }
-function weeklyChores(t, ws){ return getChores(t).filter(c=>isWeeklyStyle(c) && activeThisWeek(c, ws)); }
+function perDayChores(t, ws){ return getChores(t).filter(c=>c.cat!=='nonneg' && isPerDay(c) && activeThisWeek(c, ws) && schoolOk(c)); }
+function weeklyChores(t, ws){ return getChores(t).filter(c=>isWeeklyStyle(c) && activeThisWeek(c, ws) && schoolOk(c)); }
 function nonNegChores(t){ return getChores(t).filter(c=>c.cat==='nonneg'); }
 
 // Person-aware badge for the kid views.
@@ -415,6 +418,7 @@ let state = {
   chores: [],                 // live editable chore list — stored in homebase/chores, seeded from CHORES_SEED
   editMode: false,            // Master tab edit toggle (UI only, not persisted)
   editForm: null,             // in-progress add/edit chore form (UI only)
+  schoolYear: true,           // global toggle — when false, school:true chores are hidden from daily lists (stored in meta)
   alertDismissed: false,
   lastSync: null
 };
@@ -473,6 +477,7 @@ async function pushMeta(){
     await window._setDoc(getMetaDoc(), {
       alertDismissed: state.alertDismissed,
       projects: state.projects,
+      schoolYear: state.schoolYear,
       updatedAt: window._serverTimestamp()
     }, {merge:true});
   } catch(e){ console.error('Meta write error', e); }
@@ -515,6 +520,7 @@ function subscribeToFirestore(){
     if(snap.exists()){
       const data = snap.data();
       state.alertDismissed = data.alertDismissed || false;
+      state.schoolYear = data.schoolYear !== false;   // default ON unless explicitly turned off
       state.projects = data.projects || {a:{},b:{}};
       if(!state.projects.a) state.projects.a={};
       if(!state.projects.b) state.projects.b={};
@@ -937,6 +943,14 @@ function renderMaster(){
     <button class="btn${edit?' btn-notif':''}" style="flex-shrink:0;" onclick="toggleEditMode()">${edit?'Done':'&#9998; Edit'}</button>
   </div>`;
 
+  // School-year toggle — hides/shows all school:true chores in the kids' daily lists.
+  const sy=state.schoolYear;
+  h+=`<div class="p-summary" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:.85rem 1.1rem;">
+    <span style="font-size:14px;font-weight:500;">&#127891; School-year chores</span>
+    <button class="btn${sy?' btn-notif':''}" style="padding:5px 14px;flex-shrink:0;" onclick="toggleSchoolYear()">${sy?'On':'Off'}</button>
+    <span style="font-size:12px;color:var(--text3);">${sy?'showing in daily lists':'hidden from daily lists (summer mode)'}</span>
+  </div>`;
+
   if(edit){
     h+=`<div class="btn-row" style="margin-bottom:1rem;"><button class="btn btn-notif" onclick="startAddChore()">&#43; Add chore</button></div>`;
     if(state.editForm) h+=choreFormHTML();
@@ -951,14 +965,15 @@ function renderMaster(){
       count++;
       const note = c.cat==='biweekly'
         ? ` <span style="color:var(--text3);font-size:11px;">(${activeThisWeek(c,ws)?'active this wk':'off this wk'})</span>` : '';
-      const school = c.school ? ` <span class="badge b-school">school</span>` : '';
+      const hiddenBySchool = c.school && !sy;
+      const school = c.school ? ` <span class="badge b-school">school</span>${hiddenBySchool?' <span style="color:var(--text3);font-size:11px;">(hidden)</span>':''}` : '';
       const right = edit
         ? `<span style="display:flex;gap:6px;flex-shrink:0;">
              <button class="btn" style="padding:4px 10px;font-size:12px;" onclick="startEditChore('${c.id}')">Edit</button>
              <button class="btn btn-danger" style="padding:4px 10px;font-size:12px;" onclick="deleteChore('${c.id}')">Delete</button>
            </span>`
         : `<span class="c-freq">${esc(choreFreqLabel(c))}</span>`;
-      h+=`<div class="chore-row" style="cursor:default;">
+      h+=`<div class="chore-row" style="cursor:default;${hiddenBySchool?'opacity:.5;':''}">
         <span class="c-name">${esc(c.text)} ${whoBadge(c.person)}${school}${note}</span>
         ${right}
       </div>`;
@@ -1085,6 +1100,9 @@ function dismissAlert(){
 function newChoreId(){ return 'c' + Date.now().toString(36) + Math.floor(Math.random()*46656).toString(36); }
 
 function toggleEditMode(){ state.editMode=!state.editMode; if(!state.editMode) state.editForm=null; renderMaster(); }
+
+// Global school-year switch — persisted in meta so it syncs to every device.
+function toggleSchoolYear(){ state.schoolYear=!state.schoolYear; pushMeta(); renderMaster(); }
 
 function startAddChore(){
   state.editForm={ id:null, text:'', person:'both', cat:'daily', days:[], parity:0, school:false };
