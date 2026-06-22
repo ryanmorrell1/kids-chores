@@ -334,6 +334,18 @@ function extrasFor(t){ return [...EXTRAS_SHARED, ...(t==='a'?EXTRAS_A:EXTRAS_B)]
 
 // ─── STATE ────────────────────────────────────────────────────────────────────
 
+// Escape user-editable text before interpolating into innerHTML. Chores are now editable + stored
+// in Firestore, so chore text/freq are untrusted input — must be escaped to prevent stored XSS.
+function esc(s){
+  return String(s==null?'':s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+// Chore ids are always machine-generated (newChoreId / seed). Enforce a safe charset so a
+// tampered Firestore doc can't inject an id that breaks out of the inline onclick handlers.
+function validChoreId(id){ return typeof id==='string' && /^[A-Za-z0-9_-]+$/.test(id); }
+
 // Local YYYY-MM-DD — avoids the UTC-rollover bug where an evening check (Eastern) lands on tomorrow.
 function localDateStr(d=new Date()){
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -516,7 +528,8 @@ function subscribeToFirestore(){
   // Subscribe to the editable chore list — seed from CHORES_SEED on first run.
   unsubChores = window._onSnapshot(getChoresDoc(), snap => {
     if(snap.exists() && Array.isArray(snap.data().list) && snap.data().list.length){
-      state.chores = snap.data().list;
+      // Drop any entry with a malformed id (defends inline onclick handlers against tampered docs).
+      state.chores = snap.data().list.filter(c=>c && validChoreId(c.id));
     } else {
       state.chores = CHORES_SEED.map(c=>({...c}));
       pushChores();
@@ -639,8 +652,8 @@ function renderKid(t){
     const done=!!todayMap[c.id];
     h+=`<div class="chore-row${done?' done':''}" onclick="toggleDaily('${t}','${c.id}')">
       <div class="c-check ${done?chkC:''}">${done?chkSVG():''}</div>
-      <span class="c-name">${c.text}${choreBadge(c,t)}</span>
-      <span class="c-freq">${c.freq}</span>
+      <span class="c-name">${esc(c.text)}${choreBadge(c,t)}</span>
+      <span class="c-freq">${esc(c.freq)}</span>
     </div>`;
   });
   h+=`</div>`;
@@ -653,8 +666,8 @@ function renderKid(t){
       const done=!!s.done[c.id];
       h+=`<div class="chore-row${done?' done':''}" onclick="toggleChore('${t}','${c.id}')">
         <div class="c-check ${done?chkC:''}">${done?chkSVG():''}</div>
-        <span class="c-name">${c.text}<span class="badge b-must">must do</span></span>
-        <span class="c-freq">${c.freq}</span>
+        <span class="c-name">${esc(c.text)}<span class="badge b-must">must do</span></span>
+        <span class="c-freq">${esc(c.freq)}</span>
       </div>`;
     });
     h+=`</div>`;
@@ -666,8 +679,8 @@ function renderKid(t){
     const done=!!s.done[c.id];
     h+=`<div class="chore-row${done?' done':''}" onclick="toggleChore('${t}','${c.id}')">
       <div class="c-check ${done?chkC:''}">${done?chkSVG():''}</div>
-      <span class="c-name">${c.text}${choreBadge(c,t)}</span>
-      <span class="c-freq">${c.freq}</span>
+      <span class="c-name">${esc(c.text)}${choreBadge(c,t)}</span>
+      <span class="c-freq">${esc(c.freq)}</span>
     </div>`;
   });
   h+=`</div>`;
@@ -751,7 +764,7 @@ function dailyGridHTML(t){
 
   // One row per chore — cells only on the days it occurs (off-days left blank).
   perDay.forEach(c=>{
-    h+=`<tr><td class="cname" title="${c.text}">${c.text}</td>`;
+    h+=`<tr><td class="cname" title="${esc(c.text)}">${esc(c.text)}</td>`;
     let done=0, poss=0;
     dates.forEach((date,i)=>{
       let cell='';
@@ -856,7 +869,7 @@ function renderParent(){
     } else {
       h+=`<div class="e-list">`;
       outstanding.forEach(c=>{
-        h+=`<div class="e-item"><span>${c.text}</span><span style="font-size:11px;color:var(--text3)">${c.freq}</span></div>`;
+        h+=`<div class="e-item"><span>${esc(c.text)}</span><span style="font-size:11px;color:var(--text3)">${esc(c.freq)}</span></div>`;
       });
       h+=`</div>`;
     }
@@ -944,9 +957,9 @@ function renderMaster(){
              <button class="btn" style="padding:4px 10px;font-size:12px;" onclick="startEditChore('${c.id}')">Edit</button>
              <button class="btn btn-danger" style="padding:4px 10px;font-size:12px;" onclick="deleteChore('${c.id}')">Delete</button>
            </span>`
-        : `<span class="c-freq">${choreFreqLabel(c)}</span>`;
+        : `<span class="c-freq">${esc(choreFreqLabel(c))}</span>`;
       h+=`<div class="chore-row" style="cursor:default;">
-        <span class="c-name">${c.text} ${whoBadge(c.person)}${school}${note}</span>
+        <span class="c-name">${esc(c.text)} ${whoBadge(c.person)}${school}${note}</span>
         ${right}
       </div>`;
     });
@@ -970,7 +983,7 @@ function choreFormHTML(){
   return `<div class="p-summary" style="border:1px solid var(--purple-border);">
     <h3 class="purple">${f.id?'Edit chore':'Add chore'}</h3>
     <div style="display:flex;flex-direction:column;gap:12px;">
-      <label class="cf-lbl">Chore name<br><input id="cf-text" type="text" value="${(f.text||'').replace(/"/g,'&quot;')}" placeholder="e.g. Take out recycling" class="cf-in"></label>
+      <label class="cf-lbl">Chore name<br><input id="cf-text" type="text" value="${esc(f.text)}" placeholder="e.g. Take out recycling" class="cf-in"></label>
       <div style="display:flex;gap:12px;flex-wrap:wrap;">
         <label class="cf-lbl" style="flex:1;min-width:130px;">Person<br><select id="cf-person" class="cf-in">
           <option value="both" ${sel(f.person,'both')}>Both</option>
@@ -1105,6 +1118,7 @@ function saveChore(){
   if(cat==='scheduled' && !days.length){ alert('Pick at least one day for a scheduled chore.'); return; }
 
   const rec={ id: state.editForm.id || newChoreId(), text, person, cat };
+  if(!validChoreId(rec.id)){ alert('Invalid chore id — not saved.'); return; }
   if(school) rec.school=true;
   if(days.length) rec.days=days;
   if(cat==='biweekly') rec.parity=parity;
