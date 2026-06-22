@@ -26,10 +26,10 @@
   const app = initializeApp(firebaseConfig);
   const db  = getFirestore(app);
 
-  // Firestore document paths (one doc per kid per week; auto-resets Sunday)
-  // /homebase/a_YYYY-MM-DD  → Addison's week
+  // Firestore document paths (one doc per kid per week; week starts MONDAY, auto-resets Monday)
+  // /homebase/a_YYYY-MM-DD  → Addison's week (Monday's date). Holds weekly `done` + per-date `daily` maps.
   // /homebase/b_YYYY-MM-DD  → Bryson's week
-  // /homebase/meta          → alert dismissed flag
+  // /homebase/meta          → alert dismissed flag + persistent one-time project claims
 
   window._db = db;
   window._doc = doc;
@@ -184,6 +184,21 @@
   .e-item .eamt{font-weight:600;color:var(--text);}
   .no-extras{font-size:13px;color:var(--text3);font-style:italic;}
 
+  /* DAILY GRID (parent report) */
+  .p-summary h3.purple{color:var(--purple-dark);}
+  .p-summary h3.teal{color:var(--teal-dark);}
+  .daygrid-scroll{overflow-x:auto;}
+  .daygrid{width:100%;border-collapse:collapse;font-size:12px;}
+  .daygrid th{font-size:10px;color:var(--text3);font-weight:600;text-align:center;padding:4px 3px;text-transform:uppercase;letter-spacing:.03em;}
+  .daygrid th.cname{text-align:left;}
+  .daygrid td{text-align:center;padding:6px 3px;border-top:1px solid var(--border);white-space:nowrap;}
+  .daygrid td.cname{text-align:left;color:var(--text2);max-width:150px;overflow:hidden;text-overflow:ellipsis;}
+  .daygrid .cell-done{color:var(--green-dark);font-weight:700;}
+  .daygrid .cell-miss{color:var(--text3);}
+  .daygrid .ctot{font-weight:600;color:var(--text);}
+  .daygrid th.today,.daygrid td.today{background:var(--surface2);}
+  .daygrid tr.dg-total td{border-top:1.5px solid var(--border2);font-weight:600;color:var(--text2);}
+
   .payout-bar{background:var(--green-bg);border:1px solid #97C459;border-radius:var(--radius);padding:1rem 1.25rem;display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;}
   .payout-bar .pt-label{font-size:14px;font-weight:500;color:var(--green-dark);}
   .payout-bar .pt-val{font-size:24px;font-weight:700;color:var(--green-dark);}
@@ -320,9 +335,28 @@ function extrasFor(t){ return [...EXTRAS_SHARED, ...(t==='a'?EXTRAS_A:EXTRAS_B)]
 
 // ─── STATE ────────────────────────────────────────────────────────────────────
 
+// Local YYYY-MM-DD — avoids the UTC-rollover bug where an evening check (Eastern) lands on tomorrow.
+function localDateStr(d=new Date()){
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+// Week starts MONDAY. Returns the Monday (local) of the current week as YYYY-MM-DD.
 function getWeekStartStr(){
-  const d=new Date(), day=d.getDay(), diff=d.getDate()-day;
-  return new Date(new Date().setDate(diff)).toISOString().split('T')[0];
+  const d=new Date(), day=d.getDay();        // 0=Sun .. 6=Sat
+  const diff=(day===0?-6:1-day);             // days back to Monday (Sun belongs to the week that began Mon)
+  const monday=new Date(d); monday.setDate(d.getDate()+diff);
+  return localDateStr(monday);
+}
+
+// Daily chores reset every day; everything else persists for the week.
+function isDaily(c){ return c.freq.startsWith('Daily'); }
+function dailyChores(t){ return CHORES[t].filter(isDaily); }
+function weeklyChores(t){ return CHORES[t].filter(c=>!isDaily(c)); }
+
+// The 7 local date strings (Mon..Sun) for a given week-start date string.
+function weekDates(weekStartStr){
+  const start=new Date(weekStartStr+'T00:00:00');
+  return Array.from({length:7},(_,i)=>{ const d=new Date(start); d.setDate(start.getDate()+i); return localDateStr(d); });
 }
 
 // "Jun 14 – Jun 20" for a given week-start date string. Used on both kid tabs and parent report.
@@ -334,7 +368,7 @@ function weekRangeStr(weekStartStr){
 }
 
 function freshKidState(t){
-  return {done:{},claimed:{},grade:null,allowance:KIDS[t].allowance,weekStart:getWeekStartStr()};
+  return {done:{},daily:{},claimed:{},grade:null,allowance:KIDS[t].allowance,weekStart:getWeekStartStr()};
 }
 
 let state = {
@@ -369,6 +403,7 @@ async function pushState(t){
     const s = state[t];
     await window._setDoc(getWeekDoc(t), {
       done: s.done,
+      daily: s.daily || {},
       claimed: s.claimed,
       grade: s.grade || null,
       allowance: s.allowance,
@@ -406,6 +441,7 @@ function subscribeToFirestore(){
         } else {
           state[t] = {
             done: data.done || {},
+            daily: data.daily || {},
             claimed: data.claimed || {},
             grade: data.grade || null,
             allowance: data.allowance || KIDS[t].allowance,
@@ -442,10 +478,32 @@ function subscribeToFirestore(){
 
 function getStats(t){
   const s = state[t];
-  const chores = CHORES[t];
-  const doneCount = chores.filter(c=>s.done[c.id]).length;
-  const total = chores.length;
-  const pct = total>0 ? doneCount/total : 0;
+  const weekly = weeklyChores(t);
+  const daily  = dailyChores(t);
+  const dates  = weekDates(s.weekStart);
+  const today  = localDateStr();
+
+  // Weekly chores — persist until the Monday reset.
+  const weeklyDone  = weekly.filter(c=>s.done[c.id]).length;
+  const weeklyTotal = weekly.length;
+
+  // Daily chores — counted across all 7 days of the week (denominator is always ×7).
+  let dailyDone = 0;
+  dates.forEach(date=>{
+    const dmap = (s.daily && s.daily[date]) || {};
+    daily.forEach(c=>{ if(dmap[c.id]) dailyDone++; });
+  });
+  const dailyPossible = daily.length * 7;
+
+  // Today's daily snapshot — what the kid sees on their own tab.
+  const todayMap   = (s.daily && s.daily[today]) || {};
+  const todayDone  = daily.filter(c=>todayMap[c.id]).length;
+  const todayTotal = daily.length;
+
+  // Combined pool drives allowance: daily instances + weekly chores, one big percentage.
+  const totalDone     = weeklyDone + dailyDone;
+  const totalPossible = weeklyTotal + dailyPossible;
+  const pct = totalPossible>0 ? totalDone/totalPossible : 0;
   const allowance = s.allowance || KIDS[t].allowance;
   const allowEarned = Math.round(pct*allowance);
   // Weekly extras live in the per-week doc (reset every week); one-time projects live in meta (persistent).
@@ -458,7 +516,8 @@ function getStats(t){
   const tier = GRADE_TIERS.find(g=>g.gpa===s.grade);
   const gradeBonus = (tier&&!tier.floor)?tier.amt:0;
   const totalExtras = extrasEarned+gradeBonus;
-  return {doneCount,total,pct,allowEarned,extrasEarned,gradeBonus,totalExtras,claimedList,allowance};
+  return {weeklyDone,weeklyTotal,dailyDone,dailyPossible,todayDone,todayTotal,
+          totalDone,totalPossible,pct,allowEarned,extrasEarned,gradeBonus,totalExtras,claimedList,allowance};
 }
 
 // ─── RENDER KID ───────────────────────────────────────────────────────────────
@@ -469,7 +528,6 @@ function renderKid(t){
   const isA = t==='a';
   const s = state[t];
   const stats = getStats(t);
-  const pct = Math.round(stats.pct*100);
   const valC = isA?'val-purple':'val-teal';
   const pfC  = isA?'pf-a':'pf-b';
   const chkC = isA?'chk-a':'chk-b';
@@ -480,13 +538,17 @@ function renderKid(t){
 
   const allowVal = s.allowance||KIDS[t].allowance;
 
+  const todayPct  = stats.todayTotal>0  ? Math.round(stats.todayDone/stats.todayTotal*100)   : 0;
+  const weeklyPct = stats.weeklyTotal>0 ? Math.round(stats.weeklyDone/stats.weeklyTotal*100) : 0;
+  const todayLabel = new Date().toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
+
   let h = `
   <div class="main">
   <div class="summary-grid">
     <div class="summary-card">
-      <div class="s-label">Chores done</div>
-      <div class="s-value ${valC}">${stats.doneCount}<span style="font-size:16px;font-weight:400;color:var(--text3)">/${stats.total}</span></div>
-      <div class="s-sub">${pct}% complete</div>
+      <div class="s-label">Today's chores</div>
+      <div class="s-value ${valC}">${stats.todayDone}<span style="font-size:16px;font-weight:400;color:var(--text3)">/${stats.todayTotal}</span></div>
+      <div class="s-sub">${todayLabel}</div>
     </div>
     <div class="summary-card">
       <div class="s-label">Allowance earned</div>
@@ -500,13 +562,33 @@ function renderKid(t){
     </div>
   </div>
   <div class="prog-wrap">
-    <div class="prog-labels"><span>Weekly chore progress<span style="color:var(--text3);font-weight:400;"> · Week of ${weekRangeStr(s.weekStart)}</span></span><span>${stats.doneCount} of ${stats.total} done</span></div>
-    <div class="prog-track"><div class="prog-fill ${pfC}" style="width:${pct}%"></div></div>
+    <div class="prog-labels"><span>Today's daily chores</span><span>${stats.todayDone} of ${stats.todayTotal} done</span></div>
+    <div class="prog-track"><div class="prog-fill ${pfC}" style="width:${todayPct}%"></div></div>
+    <div class="prog-labels" style="margin-top:12px;"><span>Weekly chores<span style="color:var(--text3);font-weight:400;"> · Week of ${weekRangeStr(s.weekStart)}</span></span><span>${stats.weeklyDone} of ${stats.weeklyTotal} done</span></div>
+    <div class="prog-track"><div class="prog-fill ${pfC}" style="width:${weeklyPct}%"></div></div>
   </div>`;
 
-  // Chores
-  h += `<div class="section"><div class="sec-head"><span>Weekly chores</span><span>${stats.doneCount}/${stats.total}</span></div>`;
-  CHORES[t].forEach(c=>{
+  // Today's chores — daily list, resets every day (tracked per calendar date)
+  const today = localDateStr();
+  const todayMap = (s.daily && s.daily[today]) || {};
+  h += `<div class="section"><div class="sec-head"><span>Today's chores · ${todayLabel}</span><span>${stats.todayDone}/${stats.todayTotal}</span></div>`;
+  dailyChores(t).forEach(c=>{
+    const done=!!todayMap[c.id];
+    let badge='';
+    if(c.type==='shared') badge=`<span class="badge b-shared">shared</span>`;
+    else if(c.type==='unique') badge=`<span class="badge ${uniqBadge}">${uniqLabel}</span>`;
+    else if(c.type==='school') badge=`<span class="badge b-school">school year</span>`;
+    h+=`<div class="chore-row${done?' done':''}" onclick="toggleDaily('${t}','${c.id}')">
+      <div class="c-check ${done?chkC:''}">${done?chkSVG():''}</div>
+      <span class="c-name">${c.text}${badge}</span>
+      <span class="c-freq">${c.freq}</span>
+    </div>`;
+  });
+  h+=`</div>`;
+
+  // Weekly chores — persist (stay checked) until the Monday reset
+  h += `<div class="section"><div class="sec-head"><span>Weekly chores</span><span>${stats.weeklyDone}/${stats.weeklyTotal}</span></div>`;
+  weeklyChores(t).forEach(c=>{
     const done=!!s.done[c.id];
     let badge='';
     if(c.type==='shared') badge=`<span class="badge b-shared">shared</span>`;
@@ -582,6 +664,45 @@ function renderKid(t){
 
 // ─── RENDER PARENT ────────────────────────────────────────────────────────────
 
+// 7-day grid (Mon..Sun) of a kid's daily chores. Today's column is highlighted.
+function dailyGridHTML(t){
+  const s=state[t], kid=KIDS[t];
+  const daily=dailyChores(t);
+  const dates=weekDates(s.weekStart);
+  const today=localDateStr();
+  const labels=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  const cc=t==='a'?'purple':'teal';
+
+  let h=`<div class="p-summary"><h3 class="${cc}">${kid.name}'s daily chores — by day</h3>`;
+  h+=`<div class="daygrid-scroll"><table class="daygrid"><thead><tr><th class="cname"></th>`;
+  labels.forEach((lab,i)=>{ h+=`<th class="${dates[i]===today?'today':''}">${lab}</th>`; });
+  h+=`<th class="ctot">✓</th></tr></thead><tbody>`;
+
+  daily.forEach(c=>{
+    h+=`<tr><td class="cname" title="${c.text}">${c.text}</td>`;
+    let cnt=0;
+    dates.forEach(date=>{
+      const done=!!((s.daily&&s.daily[date])||{})[c.id];
+      if(done) cnt++;
+      h+=`<td class="${date===today?'today ':''}${done?'cell-done':'cell-miss'}">${done?'✓':'·'}</td>`;
+    });
+    h+=`<td class="ctot">${cnt}/7</td></tr>`;
+  });
+
+  // Per-day totals
+  let grand=0;
+  h+=`<tr class="dg-total"><td class="cname">Daily total</td>`;
+  dates.forEach(date=>{
+    const dmap=(s.daily&&s.daily[date])||{};
+    const c=daily.filter(ch=>dmap[ch.id]).length;
+    grand+=c;
+    h+=`<td class="${date===today?'today ':''}ctot">${c}</td>`;
+  });
+  h+=`<td class="ctot">${grand}/${daily.length*7}</td></tr>`;
+  h+=`</tbody></table></div></div>`;
+  return h;
+}
+
 function renderParent(){
   const sA=getStats('a'), sB=getStats('b');
   const totalPayout=sA.allowEarned+sA.totalExtras+sB.allowEarned+sB.totalExtras;
@@ -605,7 +726,8 @@ function renderParent(){
         <div class="p-card-sub">Allowance up to $${stats.allowance}/week</div>
       </div>
       <div class="p-card-body">
-        <div class="p-row"><span class="pl">Chores completed</span><span class="pv ${pctC}">${stats.doneCount}/${stats.total} (${pct}%)</span></div>
+        <div class="p-row"><span class="pl">Daily chores (this wk)</span><span class="pv">${stats.dailyDone}/${stats.dailyPossible}</span></div>
+        <div class="p-row"><span class="pl">Weekly chores</span><span class="pv ${pctC}">${stats.weeklyDone}/${stats.weeklyTotal}</span></div>
         <div class="p-row"><span class="pl">Allowance earned</span><span class="pv ${cc}">$${stats.allowEarned}</span></div>
         <div class="p-row"><span class="pl">Extra chores</span><span class="pv ${cc}">$${stats.extrasEarned}</span></div>
         <div class="p-row"><span class="pl">Grade bonus</span><span class="pv ${cc}">${stats.gradeBonus>0?'$'+stats.gradeBonus:'—'}</span></div>
@@ -615,6 +737,10 @@ function renderParent(){
     </div>`;
   });
   h+=`</div>`;
+
+  // Daily chore grids — day-by-day (Mon..Sun) per kid
+  h+=dailyGridHTML('a');
+  h+=dailyGridHTML('b');
 
   // Extras breakdown
   h+=`<div class="p-grid">`;
@@ -645,12 +771,10 @@ function renderParent(){
   ['a','b'].forEach(t=>{
     const s=state[t];
     const kid=KIDS[t];
-    const outstanding=CHORES[t].filter(c=>
-      !s.done[c.id]&&(c.freq==='Daily'||c.freq.includes('week')||c.freq.includes('Sat')||c.freq.includes('Wed'))
-    );
-    h+=`<div class="p-summary"><h3>${kid.name}'s outstanding</h3>`;
+    const outstanding=weeklyChores(t).filter(c=>!s.done[c.id]);
+    h+=`<div class="p-summary"><h3>${kid.name}'s outstanding weekly chores</h3>`;
     if(outstanding.length===0){
-      h+=`<div class="no-extras">All recurring chores done! &#127881;</div>`;
+      h+=`<div class="no-extras">All weekly chores done! &#127881;</div>`;
     } else {
       h+=`<div class="e-list">`;
       outstanding.forEach(c=>{
@@ -684,6 +808,16 @@ function renderParent(){
 
 function toggleChore(t,id){
   state[t].done[id]=!state[t].done[id];
+  renderKid(t);
+  pushState(t);
+}
+
+// Daily chores are stored per calendar date, so each day starts fresh and history is kept for the week's grid.
+function toggleDaily(t,id){
+  const today=localDateStr();
+  if(!state[t].daily) state[t].daily={};
+  if(!state[t].daily[today]) state[t].daily[today]={};
+  state[t].daily[today][id]=!state[t].daily[today][id];
   renderKid(t);
   pushState(t);
 }
@@ -743,8 +877,8 @@ function checkAlerts(){
   const isSun=day===0&&hour>=8&&hour<18;
   if((isSat||isSun)&&!state.alertDismissed){
     const msg=isSat
-      ?'<strong>Week ends tomorrow!</strong> Check any outstanding chores for Addison and Bryson.'
-      :'<strong>Last day of the week!</strong> Any remaining chores need to be done today.';
+      ?'<strong>Weekend catch-up!</strong> Two days left to finish this week\'s weekly chores.'
+      :'<strong>Last day of the week!</strong> Finish any outstanding weekly chores today — resets Monday.';
     document.getElementById('alert-text').innerHTML=msg;
     document.getElementById('alert-bar').classList.remove('hidden');
     if(Notification&&Notification.permission==='granted'){
@@ -869,9 +1003,11 @@ STEP 7 — Enable Saturday/Sunday reminders (optional, per device)
   Each device that grants permission gets a browser notification
   Saturday morning and again Sunday morning when the week is ending.
 
-That's it. The app auto-resets every Sunday (new Firestore doc per week),
-so history is preserved — each week's data lives at homebase/a_YYYY-MM-DD
-and homebase/b_YYYY-MM-DD in Firestore if you ever want to look back.
+That's it. The week runs Monday–Sunday and auto-resets every Monday (new Firestore
+doc per week), so history is preserved — each week's data lives at homebase/a_YYYY-MM-DD
+and homebase/b_YYYY-MM-DD (the date is that week's Monday) if you ever want to look back.
+Daily chores reset every day (tracked per date inside the week doc); weekly chores stay
+checked until the Monday reset.
 
 ──────────────────────────────────────────────────────────────────────────── -->
 
