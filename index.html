@@ -186,6 +186,11 @@
   .e-item .eamt{font-weight:600;color:var(--text);}
   .no-extras{font-size:13px;color:var(--text3);font-style:italic;}
 
+  /* WEEKLY CHORE STATUS (parent report) — checked + struck when done */
+  .wk-box{display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;border:1.5px solid var(--border2);border-radius:4px;font-size:11px;color:var(--green-dark);flex-shrink:0;}
+  .e-item.wk-done .wk-box{border-color:var(--green-dark);background:var(--green-bg);font-weight:700;}
+  .e-item.wk-done .wk-text{text-decoration:line-through;color:var(--text3);}
+
   /* DAILY GRID (parent report) */
   .p-summary h3.purple{color:var(--purple-dark);}
   .p-summary h3.teal{color:var(--teal-dark);}
@@ -863,19 +868,24 @@ function renderParent(){
   });
   h+=`</div>`;
 
-  // Outstanding chores
+  // Weekly chores — full list with done/outstanding status (checked + struck, not removed)
   h+=`<div class="p-grid">`;
   ['a','b'].forEach(t=>{
     const s=state[t];
     const kid=KIDS[t];
-    const outstanding=weeklyChores(t, s.weekStart).filter(c=>!s.done[c.id]);
-    h+=`<div class="p-summary"><h3>${kid.name}'s outstanding weekly chores</h3>`;
-    if(outstanding.length===0){
-      h+=`<div class="no-extras">All weekly chores done! &#127881;</div>`;
+    const weekly=weeklyChores(t, s.weekStart);
+    const doneCount=weekly.filter(c=>s.done[c.id]).length;
+    h+=`<div class="p-summary"><h3>${kid.name}'s weekly chores <span style="color:var(--text3);font-weight:400;">${doneCount}/${weekly.length} done</span></h3>`;
+    if(weekly.length===0){
+      h+=`<div class="no-extras">No weekly chores this week.</div>`;
     } else {
       h+=`<div class="e-list">`;
-      outstanding.forEach(c=>{
-        h+=`<div class="e-item"><span>${esc(c.text)}</span><span style="font-size:11px;color:var(--text3)">${esc(c.freq)}</span></div>`;
+      weekly.forEach(c=>{
+        const done=!!s.done[c.id];
+        h+=`<div class="e-item${done?' wk-done':''}">
+          <span style="display:flex;align-items:center;gap:8px;"><span class="wk-box">${done?'&#10003;':''}</span><span class="wk-text">${esc(c.text)}</span></span>
+          <span style="font-size:11px;color:var(--text3)">${esc(c.freq)}</span>
+        </div>`;
       });
       h+=`</div>`;
     }
