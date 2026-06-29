@@ -339,11 +339,13 @@ const GRADE_TIERS = [
 ];
 
 // Live editable extras list (Firestore-backed), falling back to the seed before first load.
-function allExtras(){ return (state.extras && state.extras.length) ? state.extras : EXTRAS_SEED; }
+// Fall back to the seed only before the Firestore doc has loaded. Once loaded, an empty
+// list means the user deleted everything — respect it, don't re-seed.
+function allExtras(){ return state.extrasLoaded ? (state.extras||[]) : EXTRAS_SEED; }
 function getExtras(t){ return allExtras().filter(e=>e.person===t || e.person==='both'); }
 
-// Live editable special-projects list (definitions live in homebase/projects; CLAIMS live in meta).
-function allProjects(){ return (state.projectDefs && state.projectDefs.length) ? state.projectDefs : PROJECTS_SEED; }
+// Live editable special-projects list (definitions live in homebase/projects; per-week claims live in state[t].projects).
+function allProjects(){ return state.projectsLoaded ? (state.projectDefs||[]) : PROJECTS_SEED; }
 function getProjects(t){ return allProjects().filter(p=>p.person===t || p.person==='both'); }
 
 // ─── STATE ────────────────────────────────────────────────────────────────────
@@ -374,7 +376,7 @@ function getWeekStartStr(){
 }
 
 // The live chore list (Firestore-backed), falling back to the seed before first load.
-function allChores(){ return (state.chores && state.chores.length) ? state.chores : CHORES_SEED; }
+function allChores(){ return state.choresLoaded ? (state.chores||[]) : CHORES_SEED; }
 function getChores(t){ return allChores().filter(c=>c.person===t || c.person==='both'); }
 
 // Classification by explicit `cat`:
@@ -431,6 +433,9 @@ let state = {
   chores: [],                 // live editable chore list — stored in homebase/chores, seeded from CHORES_SEED
   extras: [],                 // live editable extra-earnings list — stored in homebase/extras, seeded from EXTRAS_SEED
   projectDefs: [],            // live editable special-project DEFINITIONS — stored in homebase/projects (claims live per-week in state[t].projects)
+  choresLoaded: false,        // true once the Firestore doc has loaded — guards getters from re-seeding an emptied list
+  extrasLoaded: false,
+  projectsLoaded: false,
   editMode: false,            // Master tab edit toggle (UI only, not persisted)
   editForm: null,             // in-progress add/edit chore form (UI only)
   schoolYear: true,           // global toggle — when false, school:true chores are hidden from daily lists (stored in meta)
@@ -622,6 +627,7 @@ function subscribeToFirestore(){
       state.chores = CHORES_SEED.map(c=>({...c}));   // seed only when the doc doesn't exist yet
       pushChores();
     }
+    state.choresLoaded = true;   // past this point an empty list means "emptied", not "not loaded"
     if(currentView==='p') renderParent();
     else if(currentView==='m') renderMaster();
     else renderKid(currentView);
@@ -635,6 +641,7 @@ function subscribeToFirestore(){
       state.extras = EXTRAS_SEED.map(e=>({...e}));
       pushExtras();
     }
+    state.extrasLoaded = true;
     if(currentView==='p') renderParent();
     else if(currentView==='m') renderMaster();
     else renderKid(currentView);
@@ -648,6 +655,7 @@ function subscribeToFirestore(){
       state.projectDefs = PROJECTS_SEED.map(p=>({...p}));
       pushProjectDefs();
     }
+    state.projectsLoaded = true;
     if(currentView==='p') renderParent();
     else if(currentView==='m') renderMaster();
     else renderKid(currentView);
