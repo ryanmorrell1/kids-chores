@@ -422,16 +422,15 @@ function weekRangeStr(weekStartStr){
 }
 
 function freshKidState(t){
-  return {done:{},daily:{},claimed:{},grade:null,allowance:KIDS[t].allowance,weekStart:getWeekStartStr()};
+  return {done:{},daily:{},claimed:{},projects:{},grade:null,allowance:KIDS[t].allowance,weekStart:getWeekStartStr()};
 }
 
 let state = {
   a: freshKidState('a'),
   b: freshKidState('b'),
-  projects: { a:{}, b:{} },   // persistent one-time project claims — stored in meta doc, NOT reset weekly
   chores: [],                 // live editable chore list — stored in homebase/chores, seeded from CHORES_SEED
   extras: [],                 // live editable extra-earnings list — stored in homebase/extras, seeded from EXTRAS_SEED
-  projectDefs: [],            // live editable special-project DEFINITIONS — stored in homebase/projects (claims are in state.projects)
+  projectDefs: [],            // live editable special-project DEFINITIONS — stored in homebase/projects (claims live per-week in state[t].projects)
   editMode: false,            // Master tab edit toggle (UI only, not persisted)
   editForm: null,             // in-progress add/edit chore form (UI only)
   schoolYear: true,           // global toggle — when false, school:true chores are hidden from daily lists (stored in meta)
@@ -441,6 +440,55 @@ let state = {
 
 let currentView = 'a';
 let unsubA = null, unsubB = null, unsubMeta = null, unsubChores = null, unsubExtras = null, unsubProjects = null;
+
+// Parent Report week selector. null = live/current week; else a 'YYYY-MM-DD' Monday of a past week.
+let parentWeekStart = null;
+const weekHistoryCache = {};        // weekStart -> { a: docData|null, b: docData|null, loading, err }
+const WEEKS_IN_DROPDOWN = 6;        // current week + previous 5
+
+// Last N Mondays as YYYY-MM-DD, current week first.
+function recentMondays(n){
+  const out=[]; const base=new Date(getWeekStartStr()+'T00:00:00');
+  for(let i=0;i<n;i++){ const d=new Date(base); d.setDate(base.getDate()-7*i); out.push(localDateStr(d)); }
+  return out;
+}
+
+// A kid's state for the week the Parent Report is currently showing.
+// Live current-week state by default; a cached historical snapshot when a past week is selected.
+function kidState(t){
+  if(parentWeekStart){
+    const c = weekHistoryCache[parentWeekStart];
+    const d = c && c[t];
+    return {
+      done:    (d&&d.done)    || {},
+      daily:   (d&&d.daily)   || {},
+      claimed: (d&&d.claimed) || {},
+      projects:(d&&d.projects)|| {},
+      grade:   (d&&d.grade)   || null,
+      allowance:(d&&d.allowance) || KIDS[t].allowance,
+      weekStart: (d&&d.weekStart) || parentWeekStart
+    };
+  }
+  return state[t];
+}
+
+// Load a past week's docs (both kids) on demand, then re-render the Parent Report.
+async function selectParentWeek(ws){
+  if(ws===getWeekStartStr()){ parentWeekStart=null; renderParent(); return; }
+  parentWeekStart=ws;
+  if(!weekHistoryCache[ws] || weekHistoryCache[ws].err){
+    weekHistoryCache[ws]={a:null,b:null,loading:true};
+    renderParent();
+    try{
+      const [da,db]=await Promise.all([
+        window._getDoc(window._doc(window._db,'homebase',`a_${ws}`)),
+        window._getDoc(window._doc(window._db,'homebase',`b_${ws}`))
+      ]);
+      weekHistoryCache[ws]={ a: da.exists()?da.data():null, b: db.exists()?db.data():null, loading:false };
+    }catch(e){ console.error('History load error', e); weekHistoryCache[ws]={a:null,b:null,loading:false,err:true}; }
+  }
+  if(parentWeekStart===ws) renderParent();
+}
 
 // ─── FIREBASE SYNC ────────────────────────────────────────────────────────────
 
@@ -495,6 +543,7 @@ async function pushState(t){
       done: s.done,
       daily: s.daily || {},
       claimed: s.claimed,
+      projects: s.projects || {},
       grade: s.grade || null,
       allowance: s.allowance,
       weekStart: s.weekStart,
@@ -512,7 +561,6 @@ async function pushMeta(){
   try {
     await window._setDoc(getMetaDoc(), {
       alertDismissed: state.alertDismissed,
-      projects: state.projects,
       schoolYear: state.schoolYear,
       updatedAt: window._serverTimestamp()
     }, {merge:true});
@@ -534,6 +582,7 @@ function subscribeToFirestore(){
             done: data.done || {},
             daily: data.daily || {},
             claimed: data.claimed || {},
+            projects: data.projects || {},
             grade: data.grade || null,
             allowance: data.allowance || KIDS[t].allowance,
             weekStart: data.weekStart || getWeekStartStr()
@@ -557,9 +606,6 @@ function subscribeToFirestore(){
       const data = snap.data();
       state.alertDismissed = data.alertDismissed || false;
       state.schoolYear = data.schoolYear !== false;   // default ON unless explicitly turned off
-      state.projects = data.projects || {a:{},b:{}};
-      if(!state.projects.a) state.projects.a={};
-      if(!state.projects.b) state.projects.b={};
     }
     checkAlerts();
     if(currentView==='p') renderParent();
@@ -611,7 +657,7 @@ function subscribeToFirestore(){
 // ─── COMPUTED ─────────────────────────────────────────────────────────────────
 
 function getStats(t){
-  const s = state[t];
+  const s = kidState(t);
   const weekly = weeklyChores(t, s.weekStart);
   const perDay = perDayChores(t, s.weekStart);
   const nonNeg = nonNegChores(t);
@@ -647,8 +693,8 @@ function getStats(t){
   const pct = totalPossible>0 ? totalDone/totalPossible : 0;
   const allowance = s.allowance || KIDS[t].allowance;
   const allowEarned = Math.round(pct*allowance);
-  // Weekly extras live in the per-week doc (reset every week); one-time projects live in meta (persistent).
-  const projClaims = state.projects[t] || {};
+  // Both weekly extras and special-project claims live in the per-week doc — reset every Monday.
+  const projClaims = s.projects || {};
   const claimedList = [
     ...getExtras(t).filter(e=>s.claimed[e.id]),
     ...getProjects(t).filter(e=>projClaims[e.id])
@@ -798,7 +844,7 @@ function renderKid(t){
   if(projItems.length){
     h+=`<div class="section"><div class="sec-head"><span>Special projects</span></div>`;
     projItems.forEach(e=>{
-      const done=!!(state.projects[t]||{})[e.id];
+      const done=!!(s.projects||{})[e.id];
       h+=`<div class="extra-row${done?' done':''}" onclick="toggleProject('${t}','${e.id}')">
         <div class="c-check ${done?chkC:''}">${done?chkSVG():''}</div>
         <span class="c-name">${esc(e.text)} <span class="badge b-onetime">one-time</span></span>
@@ -820,7 +866,7 @@ function renderKid(t){
 
 // 7-day grid (Mon..Sun) of a kid's daily chores. Today's column is highlighted.
 function dailyGridHTML(t){
-  const s=state[t], kid=KIDS[t];
+  const s=kidState(t), kid=KIDS[t];
   const perDay=perDayChores(t, s.weekStart);
   const dates=weekDates(s.weekStart);
   const idxs=dates.map(d=>new Date(d+'T00:00:00').getDay());
@@ -868,9 +914,34 @@ function renderParent(){
   const sA=getStats('a'), sB=getStats('b');
   const totalPayout=sA.allowEarned+sA.totalExtras+sB.allowEarned+sB.totalExtras;
 
+  const viewedWeek = parentWeekStart || getWeekStartStr();
+  const isPast = !!parentWeekStart;
+  const hist = parentWeekStart ? weekHistoryCache[parentWeekStart] : null;
+  const loading = !!(hist && hist.loading);
+
   let h=`<div class="main">`;
-  h+=`<div style="font-size:13px;color:var(--text3);margin-bottom:1rem;">Week of ${weekRangeStr(state.a.weekStart)}</div>`;
-  h+=`<div class="payout-bar"><span class="pt-label">&#128181; Total family payout this week</span><span class="pt-val">$${totalPayout}</span></div>`;
+
+  // Week selector — current week + recent past weeks (loaded on demand from Firestore).
+  const cur=getWeekStartStr();
+  h+=`<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:1rem;">
+    <label style="font-size:13px;color:var(--text3);">Week</label>
+    <select onchange="selectParentWeek(this.value)" style="font-size:13px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text2);">`;
+  recentMondays(WEEKS_IN_DROPDOWN).forEach(ws=>{
+    const label = weekRangeStr(ws) + (ws===cur?' · this week':'');
+    h+=`<option value="${ws}"${ws===viewedWeek?' selected':''}>${label}</option>`;
+  });
+  h+=`</select>`;
+  if(isPast) h+=`<span style="font-size:12px;color:var(--text3);font-style:italic;">${loading?'loading…':'past week · read-only'}</span>`;
+  h+=`</div>`;
+
+  if(loading){
+    h+=`<div class="no-extras" style="text-align:center;padding:2rem;">Loading week of ${weekRangeStr(viewedWeek)}…</div></div>`;
+    document.getElementById('view-p').innerHTML=h;
+    return;
+  }
+
+  const payoutLabel = isPast ? 'Total family payout' : 'Total family payout this week';
+  h+=`<div class="payout-bar"><span class="pt-label">&#128181; ${payoutLabel}</span><span class="pt-val">$${totalPayout}</span></div>`;
 
   // Kid summary cards
   h+=`<div class="p-grid">`;
@@ -909,7 +980,7 @@ function renderParent(){
   ['a','b'].forEach(t=>{
     const stats=getStats(t);
     const kid=KIDS[t];
-    const s=state[t];
+    const s=kidState(t);
     h+=`<div class="p-summary"><h3>${kid.name}'s extras & projects</h3>`;
     if(stats.claimedList.length===0&&stats.gradeBonus===0){
       h+=`<div class="no-extras">Nothing claimed yet.</div>`;
@@ -931,7 +1002,7 @@ function renderParent(){
   // Weekly chores — full list with done/outstanding status (checked + struck, not removed)
   h+=`<div class="p-grid">`;
   ['a','b'].forEach(t=>{
-    const s=state[t];
+    const s=kidState(t);
     const kid=KIDS[t];
     const weekly=weeklyChores(t, s.weekStart);
     const doneCount=weekly.filter(c=>s.done[c.id]).length;
@@ -953,15 +1024,17 @@ function renderParent(){
   });
   h+=`</div>`;
 
-  // Controls
-  h+=`<div class="divider"></div>
-  <div class="sec-head" style="margin-bottom:1rem;">Parent controls</div>
-  <div class="btn-row">
-    <button class="btn btn-notif" onclick="requestNotif()">&#128276; Enable reminders</button>
-    <button class="btn btn-danger" onclick="resetKid('a')">Reset Addison's week</button>
-    <button class="btn btn-danger" onclick="resetKid('b')">Reset Bryson's week</button>
-    <button class="btn btn-danger" onclick="resetAll()">Reset full week</button>
-  </div>`;
+  // Controls — only for the current (live) week; past weeks are read-only history.
+  if(!isPast){
+    h+=`<div class="divider"></div>
+    <div class="sec-head" style="margin-bottom:1rem;">Parent controls</div>
+    <div class="btn-row">
+      <button class="btn btn-notif" onclick="requestNotif()">&#128276; Enable reminders</button>
+      <button class="btn btn-danger" onclick="resetKid('a')">Reset Addison's week</button>
+      <button class="btn btn-danger" onclick="resetKid('b')">Reset Bryson's week</button>
+      <button class="btn btn-danger" onclick="resetAll()">Reset full week</button>
+    </div>`;
+  }
 
   if(state.lastSync){
     h+=`<div class="last-sync">Last synced with Firebase: ${state.lastSync.toLocaleTimeString()}</div>`;
@@ -1236,10 +1309,10 @@ function toggleExtra(t,id){
 }
 
 function toggleProject(t,id){
-  if(!state.projects[t]) state.projects[t]={};
-  state.projects[t][id]=!state.projects[t][id];
+  if(!state[t].projects) state[t].projects={};
+  state[t].projects[id]=!state[t].projects[id];
   if(currentView==='p') renderParent(); else renderKid(t);
-  pushMeta();   // projects persist in meta — survive the weekly reset
+  pushState(t);   // project claims live in the per-week doc — reset on the Monday rollover
 }
 
 function selectGrade(t,gpa){
@@ -1385,7 +1458,7 @@ function deleteExtra(id){
   renderMaster();
 }
 
-// ── Special-project editing (Master tab). Note: state.projectDefs = definitions; state.projects = claims. ──
+// ── Special-project editing (Master tab). Note: state.projectDefs = definitions; per-week claims live in state[t].projects. ──
 function newProjectId(){ return 'p' + Date.now().toString(36) + Math.floor(Math.random()*46656).toString(36); }
 
 function startAddProject(){
@@ -1460,6 +1533,7 @@ function requestNotif(){
 
 function showView(v){
   currentView=v;
+  if(v!=='p') parentWeekStart=null;   // re-entering Parent Report always defaults to the current week
   ['a','b','p','m'].forEach(x=>{
     document.getElementById('view-'+x).style.display=x===v?'':'none';
     const tab=document.getElementById('tab-'+x);
