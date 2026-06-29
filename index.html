@@ -300,8 +300,8 @@ const CHORES_SEED = [
   {id:'c15',text:'Full bathroom clean',                        person:'both', cat:'biweekly', parity:0, days:[6], freq:'Every other Sat morning'},
   {id:'c16',text:'Grocery run',                                person:'a',    cat:'weekly', freq:'2x/week'},
   {id:'c17',text:'Youth group',                                person:'both', cat:'nonneg', freq:'Weekly'},
-  {id:'c18',text:'Community volunteer hours (30 hrs min)',     person:'both', cat:'nonneg', freq:'Yearly'},
 ];
+// Community volunteer hours are tracked separately (logged by the hour, running yearly tally) — see VOLUNTEER_GOAL.
 
 // Extra-earnings list (bonus $ on top of allowance). Editable from the Master tab; seeds homebase/extras.
 //   person:'a'|'b'|'both'   cat:'house'|'learning'   amt: dollars
@@ -347,6 +347,12 @@ function getExtras(t){ return allExtras().filter(e=>e.person===t || e.person==='
 // Live editable special-projects list (definitions live in homebase/projects; per-week claims live in state[t].projects).
 function allProjects(){ return state.projectsLoaded ? (state.projectDefs||[]) : PROJECTS_SEED; }
 function getProjects(t){ return allProjects().filter(p=>p.person===t || p.person==='both'); }
+
+// Community volunteer hours — logged by the hour per week, kept as a running yearly tally in meta.
+const VOLUNTEER_GOAL = 30;   // yearly minimum (hours), per kid
+function fmtHrs(n){ return String(Math.round((Number(n)||0)*10)/10); }
+function volunteerWeekHrs(t, ws){ return Number((state.volunteer[t]||{})[ws]) || 0; }
+function volunteerTotalHrs(t){ return Object.values(state.volunteer[t]||{}).reduce((s,n)=>s+(Number(n)||0), 0); }
 
 // ─── STATE ────────────────────────────────────────────────────────────────────
 
@@ -438,6 +444,8 @@ let state = {
   projectsLoaded: false,
   metaLoaded: false,
   houseExtrasBothDone: false, // one-time migration flag: household extras tagged "both" (stored in meta)
+  volunteerChoreRemoved: false, // one-time migration flag: dropped legacy c18 volunteer checkbox (stored in meta)
+  volunteer: { a:{}, b:{} },  // running volunteer-hours log per kid: { weekStart: hours } — stored in meta, persists across weekly resets
   editMode: false,            // Master tab edit toggle (UI only, not persisted)
   editForm: null,             // in-progress add/edit chore form (UI only)
   schoolYear: true,           // global toggle — when false, school:true chores are hidden from daily lists (stored in meta)
@@ -570,9 +578,24 @@ async function pushMeta(){
       alertDismissed: state.alertDismissed,
       schoolYear: state.schoolYear,
       houseExtrasBothDone: state.houseExtrasBothDone || false,
+      volunteerChoreRemoved: state.volunteerChoreRemoved || false,
+      volunteer: state.volunteer,
       updatedAt: window._serverTimestamp()
     }, {merge:true});
   } catch(e){ console.error('Meta write error', e); }
+}
+
+// One-time data fix: drop the legacy "Community volunteer hours" checkbox chore (c18) —
+// volunteer hours are now logged by the hour in their own tracker.
+function maybeRemoveVolunteerChore(){
+  if(state.volunteerChoreRemoved) return;
+  if(!state.choresLoaded || !state.metaLoaded) return;
+  if(state.chores.some(c=>c.id==='c18')){
+    state.chores = state.chores.filter(c=>c.id!=='c18');
+    pushChores();
+  }
+  state.volunteerChoreRemoved = true;
+  pushMeta();
 }
 
 // One-time data fix: tag every household extra as "both" so it shows for both kids.
@@ -628,9 +651,14 @@ function subscribeToFirestore(){
       state.alertDismissed = data.alertDismissed || false;
       state.schoolYear = data.schoolYear !== false;   // default ON unless explicitly turned off
       state.houseExtrasBothDone = data.houseExtrasBothDone || false;
+      state.volunteerChoreRemoved = data.volunteerChoreRemoved || false;
+      state.volunteer = data.volunteer || {a:{},b:{}};
+      if(!state.volunteer.a) state.volunteer.a={};
+      if(!state.volunteer.b) state.volunteer.b={};
     }
     state.metaLoaded = true;
     maybeMigrateHouseExtras();
+    maybeRemoveVolunteerChore();
     checkAlerts();
     if(currentView==='p') renderParent();
     else if(currentView==='m') renderMaster();
@@ -647,6 +675,7 @@ function subscribeToFirestore(){
       pushChores();
     }
     state.choresLoaded = true;   // past this point an empty list means "emptied", not "not loaded"
+    maybeRemoveVolunteerChore();
     if(currentView==='p') renderParent();
     else if(currentView==='m') renderMaster();
     else renderKid(currentView);
@@ -814,6 +843,21 @@ function renderKid(t){
     });
     h+=`</div>`;
   }
+
+  // Community volunteer hours — log this week's hours, running yearly tally toward the goal
+  const volWk  = volunteerWeekHrs(t, getWeekStartStr());
+  const volTot = volunteerTotalHrs(t);
+  const volPct = Math.min(100, Math.round(volTot/VOLUNTEER_GOAL*100));
+  const volMet = volTot>=VOLUNTEER_GOAL;
+  h += `<div class="section"><div class="sec-head"><span>Community volunteer hours</span><span>${fmtHrs(volTot)} / ${VOLUNTEER_GOAL} hrs</span></div>
+    <div class="chore-row" style="cursor:default;align-items:center;">
+      <span class="c-name">Hours this week</span>
+      <input type="number" min="0" step="0.5" value="${volWk||''}" placeholder="0" onchange="setVolunteer('${t}',this.value)"
+        style="width:70px;font-size:15px;text-align:center;border:1px solid var(--border);border-radius:6px;padding:5px 6px;color:var(--text);background:var(--bg);">
+    </div>
+    <div class="prog-track" style="margin-top:10px;"><div class="prog-fill ${pfC}" style="width:${volPct}%"></div></div>
+    <div style="font-size:12px;color:var(--text3);margin-top:7px;">${volMet?'&#9989; Yearly '+VOLUNTEER_GOAL+'-hour goal met!':fmtHrs(VOLUNTEER_GOAL-volTot)+' hrs to go this year'}</div>
+  </div>`;
 
   // Weekly chores — persist (stay checked) until the Monday reset
   h += `<div class="section"><div class="sec-head"><span>Weekly chores</span><span>${stats.weeklyDone}/${stats.weeklyTotal}</span></div>`;
@@ -989,6 +1033,7 @@ function renderParent(){
         <div class="p-row"><span class="pl">Daily chores (this wk)</span><span class="pv">${stats.dailyDone}/${stats.dailyPossible}</span></div>
         <div class="p-row"><span class="pl">Weekly chores</span><span class="pv ${pctC}">${stats.weeklyDone}/${stats.weeklyTotal}</span></div>
         ${stats.nonNegTotal?`<div class="p-row"><span class="pl">Non-negotiables</span><span class="pv">${stats.nonNegDone}/${stats.nonNegTotal} <span style="color:var(--text3);font-weight:400;">no $</span></span></div>`:''}
+        <div class="p-row"><span class="pl">Volunteer hrs (${isPast?'this wk':'year'})</span><span class="pv">${isPast?fmtHrs(volunteerWeekHrs(t,viewedWeek))+' hrs':fmtHrs(volunteerTotalHrs(t))+'/'+VOLUNTEER_GOAL}</span></div>
         <div class="p-row"><span class="pl">Allowance earned</span><span class="pv ${cc}">$${stats.allowEarned}</span></div>
         <div class="p-row"><span class="pl">Extra chores</span><span class="pv ${cc}">$${stats.extrasEarned}</span></div>
         <div class="p-row"><span class="pl">Grade bonus</span><span class="pv ${cc}">${stats.gradeBonus>0?'$'+stats.gradeBonus:'—'}</span></div>
@@ -1341,6 +1386,17 @@ function toggleProject(t,id){
   state[t].projects[id]=!state[t].projects[id];
   if(currentView==='p') renderParent(); else renderKid(t);
   pushState(t);   // project claims live in the per-week doc — reset on the Monday rollover
+}
+
+// Log this week's volunteer hours. Stored in meta keyed by week-start, so the running
+// yearly tally persists across the Monday reset.
+function setVolunteer(t,val){
+  if(!state.volunteer[t]) state.volunteer[t]={};
+  const ws=getWeekStartStr();
+  const n=Math.max(0, parseFloat(val)||0);
+  if(n>0) state.volunteer[t][ws]=n; else delete state.volunteer[t][ws];
+  pushMeta();
+  if(currentView==='p') renderParent(); else renderKid(t);
 }
 
 function selectGrade(t,gpa){
