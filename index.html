@@ -313,17 +313,17 @@ const EXTRAS_SEED = [
   {id:'xs5', text:'Read a book (200+ pages)',                             amt:10, cat:'learning', person:'both'},
   {id:'xs6', text:'Complete a Khan Academy course',                       amt:25, cat:'learning', person:'both'},
   {id:'xs7', text:'Complete 2 Duolingo levels',                           amt:10, cat:'learning', person:'both'},
-  {id:'xa1', text:'Deep clean kitchen (appliances, cabinets, counters)',  amt:12, cat:'house',    person:'a'},
-  {id:'xa2', text:'Organize pantry or a closet',                          amt:10, cat:'house',    person:'a'},
-  {id:'xa3', text:'Deep clean fridge & freezer',                          amt:10, cat:'house',    person:'a'},
-  {id:'xa4', text:'Wash windows inside',                                  amt:10, cat:'house',    person:'a'},
-  {id:'xa5', text:'Prep & cook a full family meal solo',                  amt:15, cat:'house',    person:'a'},
-  {id:'xb1', text:'Mow & edge lawn',                                      amt:20, cat:'house',    person:'b'},
-  {id:'xb2', text:'Rake leaves',                                          amt:12, cat:'house',    person:'b'},
-  {id:'xb3', text:'Weed garden beds',                                     amt:10, cat:'house',    person:'b'},
-  {id:'xb4', text:'Clean out garage (sweep & organize)',                  amt:15, cat:'house',    person:'b'},
-  {id:'xb5', text:'Shovel driveway/walkways',                             amt:15, cat:'house',    person:'b'},
-  {id:'xb6', text:'Wash windows outside',                                 amt:10, cat:'house',    person:'b'},
+  {id:'xa1', text:'Deep clean kitchen (appliances, cabinets, counters)',  amt:12, cat:'house',    person:'both'},
+  {id:'xa2', text:'Organize pantry or a closet',                          amt:10, cat:'house',    person:'both'},
+  {id:'xa3', text:'Deep clean fridge & freezer',                          amt:10, cat:'house',    person:'both'},
+  {id:'xa4', text:'Wash windows inside',                                  amt:10, cat:'house',    person:'both'},
+  {id:'xa5', text:'Prep & cook a full family meal solo',                  amt:15, cat:'house',    person:'both'},
+  {id:'xb1', text:'Mow & edge lawn',                                      amt:20, cat:'house',    person:'both'},
+  {id:'xb2', text:'Rake leaves',                                          amt:12, cat:'house',    person:'both'},
+  {id:'xb3', text:'Weed garden beds',                                     amt:10, cat:'house',    person:'both'},
+  {id:'xb4', text:'Clean out garage (sweep & organize)',                  amt:15, cat:'house',    person:'both'},
+  {id:'xb5', text:'Shovel driveway/walkways',                             amt:15, cat:'house',    person:'both'},
+  {id:'xb6', text:'Wash windows outside',                                 amt:10, cat:'house',    person:'both'},
 ];
 // One-time special projects (bonus $; claims persist in meta, survive the weekly reset).
 // Editable from the Master tab; seeds homebase/projects.   person:'a'|'b'|'both'   amt: dollars
@@ -436,6 +436,8 @@ let state = {
   choresLoaded: false,        // true once the Firestore doc has loaded — guards getters from re-seeding an emptied list
   extrasLoaded: false,
   projectsLoaded: false,
+  metaLoaded: false,
+  houseExtrasBothDone: false, // one-time migration flag: household extras tagged "both" (stored in meta)
   editMode: false,            // Master tab edit toggle (UI only, not persisted)
   editForm: null,             // in-progress add/edit chore form (UI only)
   schoolYear: true,           // global toggle — when false, school:true chores are hidden from daily lists (stored in meta)
@@ -567,9 +569,23 @@ async function pushMeta(){
     await window._setDoc(getMetaDoc(), {
       alertDismissed: state.alertDismissed,
       schoolYear: state.schoolYear,
+      houseExtrasBothDone: state.houseExtrasBothDone || false,
       updatedAt: window._serverTimestamp()
     }, {merge:true});
   } catch(e){ console.error('Meta write error', e); }
+}
+
+// One-time data fix: tag every household extra as "both" so it shows for both kids.
+// Runs once (guarded by a meta flag), then leaves future manual edits alone.
+function maybeMigrateHouseExtras(){
+  if(state.houseExtrasBothDone) return;
+  if(!state.extrasLoaded || !state.metaLoaded) return;   // wait until both docs are loaded so the flag is reliable
+  if(state.extras.some(e=>e.cat==='house' && e.person!=='both')){
+    state.extras = state.extras.map(e=> e.cat==='house' ? {...e, person:'both'} : e);
+    pushExtras();
+  }
+  state.houseExtrasBothDone = true;
+  pushMeta();   // persist the flag so this never reverts a later intentional edit
 }
 
 function subscribeToFirestore(){
@@ -611,7 +627,10 @@ function subscribeToFirestore(){
       const data = snap.data();
       state.alertDismissed = data.alertDismissed || false;
       state.schoolYear = data.schoolYear !== false;   // default ON unless explicitly turned off
+      state.houseExtrasBothDone = data.houseExtrasBothDone || false;
     }
+    state.metaLoaded = true;
+    maybeMigrateHouseExtras();
     checkAlerts();
     if(currentView==='p') renderParent();
     else if(currentView==='m') renderMaster();
@@ -642,6 +661,7 @@ function subscribeToFirestore(){
       pushExtras();
     }
     state.extrasLoaded = true;
+    maybeMigrateHouseExtras();
     if(currentView==='p') renderParent();
     else if(currentView==='m') renderMaster();
     else renderKid(currentView);
